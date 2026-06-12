@@ -1,0 +1,49 @@
+{
+  "name": "wyrm-math",
+  "version": "0.1.0",
+  "description": "Exact, conditionally-sound symbolic algebra engine for manipulative interfaces: immutable expression trees, rewrite rules with first-class assumptions, derivation trees, move enumeration, and DOM-free layout geometry.",
+  "license": "MIT",
+  "author": "Tony Di Croce",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dicroce/wyrm_math.git"
+  },
+  "keywords": [
+    "algebra",
+    "computer-algebra",
+    "math",
+    "education",
+    "symbolic",
+    "rewrite-rules",
+    "exact-arithmetic"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "ARCHITECTURE.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.1.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@11.5.3"
+}
