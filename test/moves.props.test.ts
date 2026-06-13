@@ -198,6 +198,20 @@ describe("move enumeration properties", () => {
                 }
               }
             }
+            // Same-list pairs: the lists are implicit products.
+            for (const list of [node.num, node.den]) {
+              for (const a of list) {
+                for (const b of list) {
+                  if (a.id === b.id) continue;
+                  const params = { termA: a.id, termB: b.id };
+                  for (const rule of [combineIntegerFactors, combineLikeFactors]) {
+                    if (rule.precondition(j, node.id, params)) {
+                      expectEnumerated(moves, rule.id, node.id, params);
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }),

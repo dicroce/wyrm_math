@@ -20,11 +20,15 @@ import {
   type Rule,
   type RuleApplication,
 } from "../rule.js";
+import { termFromCoeff } from "./splitTerm.js";
 
 export interface FactorOutParams {
   /** A factor INSTANCE inside one term of the Sum at `location`. */
   readonly factorA: NodeId;
-  /** A structurally equal instance inside a different term. */
+  /**
+   * An instance inside a different term: structurally equal to factorA, OR
+   * an integer literal that factorA's signed literal value divides.
+   */
   readonly factorB: NodeId;
 }
 
@@ -58,11 +62,41 @@ function cofactorOf(term: Expr, factorId: NodeId): Expr | undefined {
   return undefined;
 }
 
+/**
+ * The instance's integer value with the term's sign folded in: the 3 inside
+ * −3x reads as −3. Undefined for non-literal instances.
+ */
+function signedLiteral(term: Expr, inst: Expr): bigint | undefined {
+  if (inst.kind !== "int") return undefined;
+  return term.kind === "neg" ? -inst.value : inst.value;
+}
+
+/**
+ * The term's factors with the instance AND the term's sign removed — the
+ * cofactor that pairs with the SIGNED literal (where cofactorOf pairs with
+ * the raw instance and keeps the sign). Undefined when the instance is not
+ * a direct factor.
+ */
+function unsignedRest(term: Expr, instId: NodeId): readonly Expr[] | undefined {
+  const core = term.kind === "neg" ? term.child : term;
+  if (core.id === instId) return [];
+  if (core.kind === "product") {
+    if (!core.children.some((c) => c.id === instId)) return undefined;
+    return core.children.filter((c) => c.id !== instId);
+  }
+  return undefined;
+}
+
+type FactorOutSite = { sum: Sum; termA: Expr; termB: Expr; fa: Expr; fb: Expr } & (
+  | { mode: "structural" }
+  | { mode: "literal-divisor"; sa: bigint; sb: bigint }
+);
+
 function resolve(
   tree: Equation,
   location: Location,
   params: FactorOutParams,
-): { sum: Sum; termA: Expr; termB: Expr; fa: Expr; fb: Expr } | undefined {
+): FactorOutSite | undefined {
   const node = findById(tree, location);
   if (node === undefined || node.kind !== "sum") return undefined;
   const owns = (term: Expr, id: NodeId): Expr | undefined =>
@@ -86,8 +120,17 @@ function resolve(
   if (termA === undefined || termB === undefined || fa === undefined || fb === undefined)
     return undefined;
   if (termA.id === termB.id) return undefined;
-  if (!eq(fa, fb)) return undefined;
-  return { sum: node, termA, termB, fa, fb };
+  if (eq(fa, fb)) return { mode: "structural", sum: node, termA, termB, fa, fb };
+  // Literal-divisor factoring: the grabbed instance, read with its term's
+  // sign (the 3 of −3x is −3), divides the other term's literal — pull the
+  // SIGNED value out of both. This is what makes factoring by grouping
+  // reach the constant: −3x + 9 ~> (x + −3)·(−3).
+  const sa = signedLiteral(termA, fa);
+  const sb = signedLiteral(termB, fb);
+  if (sa === undefined || sb === undefined) return undefined;
+  if (sa === 1n || sa === -1n || sa === 0n) return undefined; // ±1 factors out as noise
+  if (sb % sa !== 0n) return undefined;
+  return { mode: "literal-divisor", sum: node, termA, termB, fa, fb, sa, sb };
 }
 
 /**
@@ -112,19 +155,33 @@ export const factorOut: Rule<FactorOutParams> = {
     if (r === undefined) {
       throw new RulePreconditionViolation(
         this.id,
-        "the two ids are not equal factor instances in distinct terms of this sum",
+        "the two ids are not equal factor instances (nor a literal divisor pair) in distinct terms of this sum",
       );
     }
-    const cofA = cofactorOf(r.termA, params.factorA)!;
-    const cofB = cofactorOf(r.termB, params.factorB)!;
-    // (cofA + cofB) · factor — factorA's node carries on by identity.
-    const newTerm = product([sum([cofA, cofB]), r.fa]);
+    let cofA: Expr;
+    let cofB: Expr;
+    let factor: Expr;
+    if (r.mode === "structural") {
+      cofA = cofactorOf(r.termA, params.factorA)!;
+      cofB = cofactorOf(r.termB, params.factorB)!;
+      // (cofA + cofB) · factor — factorA's node carries on by identity.
+      factor = r.fa;
+    } else {
+      // The signed literal comes out of both terms whole: cofactors are the
+      // sign-stripped rests, termB's scaled by sb/sa. A positive divisor IS
+      // factorA's node (identity survives); a negative one is a fresh
+      // canonical Neg(Integer).
+      cofA = product([...unsignedRest(r.termA, params.factorA)!]);
+      cofB = termFromCoeff(r.sb / r.sa, [...unsignedRest(r.termB, params.factorB)!]);
+      factor = r.sa > 0n ? r.fa : int(r.sa);
+    }
+    const newTerm = product([sum([cofA, cofB]), factor]);
     const children = r.sum.children
       .filter((c) => c.id !== r.termB.id)
       .map((c) => (c.id === r.termA.id ? newTerm : c));
     const rebuilt = rebuildNary(r.sum, children);
     const tree2 = replaceTermRespectingInvariants(tree, r.sum.id, rebuilt);
-    const mergeTarget = findById(tree2, r.fa.id) !== undefined ? r.fa.id : undefined;
+    const mergeTarget = findById(tree2, factor.id) !== undefined ? factor.id : undefined;
     return {
       equation: tree2,
       emits: [],

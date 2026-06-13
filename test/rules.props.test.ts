@@ -6,6 +6,7 @@ import {
   allNodes,
   childrenOf,
   cloneFresh,
+  combineFractions,
   combineIntegerFactors,
   combineLikeFactors,
   distribute,
@@ -15,10 +16,13 @@ import {
   equation,
   expandPower,
   factorOut,
+  factorOutNegative,
+  findParent,
   fraction,
   combineIntegers,
   findById,
   int,
+  splitTerm,
   invariantViolations,
   mkJudgment,
   moveTermAcross,
@@ -138,6 +142,37 @@ function buildSumScenario(
   other: Expr,
 ): SumScenario {
   return buildNaryScenario("sum", a, b, extras, posA, posB, wrap, onLhs, other);
+}
+
+/**
+ * Builds an equation containing a Fraction with the two designated factors in
+ * the SAME list (num or den) plus extras spliced around them; a lone literal
+ * sits on the other side of the bar. `a` and `b` must not be Products (the
+ * ctor would spread them). Bystanders are read off the constructed lists, so
+ * extras that ARE products contribute their spread children.
+ */
+function buildFractionListScenario(
+  a: Expr,
+  b: Expr,
+  extras: readonly Expr[],
+  posA: number,
+  posB: number,
+  inDen: boolean,
+  onLhs: boolean,
+  other: Expr,
+): SumScenario {
+  const list: Expr[] = [...extras];
+  list.splice(posA % (list.length + 1), 0, a);
+  list.splice(posB % (list.length + 1), 0, b);
+  const f = inDen ? fraction([int(7)], list) : fraction(list, [int(7)]);
+  const bystanders = [...f.num, ...f.den].filter((c) => c.id !== a.id && c.id !== b.id);
+  return {
+    eqn: onLhs ? equation(f, other) : equation(other, f),
+    loc: f.id,
+    termA: a.id,
+    termB: b.id,
+    bystanders,
+  };
 }
 
 describe("additive-cancellation", () => {
@@ -396,8 +431,43 @@ describe("combine-integer-factors", () => {
     );
   });
 
+  const arbListScenario = fc
+    .tuple(
+      fc.integer({ min: -9, max: 9 }),
+      fc.integer({ min: -9, max: 9 }),
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.boolean(),
+      fc.boolean(),
+      arbExpr,
+    )
+    .map(([va, vb, extras, posA, posB, inDen, onLhs, other]) => {
+      const sc = buildFractionListScenario(int(va), int(vb), extras, posA, posB, inDen, onLhs, other);
+      // No swallowing inside a list: the bar survives, the literal lands as-is.
+      return { ...sc, expected: BigInt(va) * BigInt(vb) };
+    });
+
+  it("property: folds inside fraction lists too (the lists are implicit products)", () => {
+    fc.assert(
+      fc.property(arbListScenario, arbEnvs, (sc, envs) => {
+        const params = { termA: sc.termA, termB: sc.termB };
+        const j = mkJudgment(sc.eqn);
+        expect(combineIntegerFactors.precondition(j, sc.loc, params)).toBe(true);
+        const { equation: after, diff } = combineIntegerFactors.apply(j, sc.loc, params);
+        checkAfter(sc.eqn, after);
+        expect(findById(after, sc.loc)).toBeDefined();
+        expect(diff.merged).toHaveLength(1);
+        const folded = findById(after, diff.merged[0]!.target) as Expr | undefined;
+        expect(literalValue(folded)).toBe(sc.expected);
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders);
+      }),
+    );
+  });
+
   it("rejects non-integer factors", () => {
-    // 3x: folding 3 with x must be impossible.
+    // 3x: folding 3 with x must be impossible (no coefficient to absorb into).
     const px = product([int(3), variable("x")]);
     if (px.kind !== "product") throw new Error("unreachable");
     const eqn = embed(px, "top", int(0), true);
@@ -408,6 +478,191 @@ describe("combine-integer-factors", () => {
     expect(() =>
       combineIntegerFactors.apply(mkJudgment(eqn), px.id, { termA: a!.id, termB: b!.id }),
     ).toThrow();
+  });
+
+  // The generalization: a bare integer absorbs into a sibling's coefficient,
+  // reaching it through a Neg wrapper (the "−3 onto −2x" case that previously
+  // had no move, so the grab escalated to the whole product).
+  const arbBody = arbExpr.filter(
+    (e) => e.kind !== "int" && e.kind !== "neg" && e.kind !== "sum" && e.kind !== "product",
+  );
+  const arbAbsorb = fc
+    .tuple(
+      fc.integer({ min: -9, max: 9 }).filter((v) => v !== 0),
+      fc.integer({ min: 1, max: 9 }),
+      arbBody,
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.integer({ min: 0, max: 7 }),
+      arbProductWrap,
+      fc.boolean(),
+      arbExpr,
+    )
+    .map(([v, m, body, extras, posA, posB, wrap, onLhs, other]) => {
+      // Neg wrapper keeps the coefficient nested (a bare product would flatten
+      // into the outer one). coeff of the target is −m: −body or −(m·body).
+      const target = neg(m === 1 ? body : product([int(m), body]));
+      const sc = buildNaryScenario("product", int(v), target, extras, posA, posB, wrap, onLhs, other);
+      return { ...sc, body, expectedCoeff: BigInt(v) * BigInt(-m) };
+    });
+
+  it("property: a bare integer absorbs into a Neg-wrapped coefficient, soundly", () => {
+    fc.assert(
+      fc.property(arbAbsorb, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        const params = { termA: sc.termA, termB: sc.termB };
+        expect(combineIntegerFactors.precondition(j, sc.loc, params)).toBe(true);
+        const { equation: after, emits, diff } = combineIntegerFactors.apply(j, sc.loc, params);
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        expect(diff.merged).toHaveLength(1);
+        // The body survives by identity (unless it dissolved into a flattening
+        // parent — a product body would, but arbBody excludes products).
+        expect(findById(after, sc.body.id)).toBeDefined();
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders, true);
+      }),
+    );
+  });
+
+  it("builds the textbook shapes the playtest asked for", () => {
+    // −3 · −(2x) ~> 6x  (the reported grab/fold)
+    const neg3 = neg(int(3));
+    const neg2x = neg(product([int(2), variable("x")]));
+    const p1 = product([neg3, neg2x]);
+    if (p1.kind !== "product") throw new Error("unreachable");
+    const r1 = combineIntegerFactors.apply(mkJudgment(equation(p1, int(0))), p1.id, {
+      termA: neg3.id,
+      termB: neg2x.id,
+    });
+    expect(eq(r1.equation.lhs, product([int(6), variable("x")]))).toBe(true);
+
+    // x · (−1) ~> −x  (the −1 sign absorber)
+    const x = variable("x");
+    const negOne = neg(int(1));
+    const p2 = product([x, negOne]);
+    if (p2.kind !== "product") throw new Error("unreachable");
+    const r2 = combineIntegerFactors.apply(mkJudgment(equation(p2, int(0))), p2.id, {
+      termA: x.id,
+      termB: negOne.id,
+    });
+    expect(eq(r2.equation.lhs, neg(variable("x")))).toBe(true);
+
+    // 3 · (−x) ~> −3x  and  (−1)(−x) ~> x
+    const three = int(3);
+    const negX = neg(variable("x"));
+    const p3 = product([three, negX]);
+    if (p3.kind !== "product") throw new Error("unreachable");
+    const r3 = combineIntegerFactors.apply(mkJudgment(equation(p3, int(0))), p3.id, {
+      termA: three.id,
+      termB: negX.id,
+    });
+    expect(eq(r3.equation.lhs, neg(product([int(3), variable("x")])))).toBe(true);
+
+    const nOne = neg(int(1));
+    const nX = neg(variable("x"));
+    const p4 = product([nOne, nX]);
+    if (p4.kind !== "product") throw new Error("unreachable");
+    const r4 = combineIntegerFactors.apply(mkJudgment(equation(p4, int(0))), p4.id, {
+      termA: nOne.id,
+      termB: nX.id,
+    });
+    expect(eq(r4.equation.lhs, variable("x"))).toBe(true);
+  });
+
+  it("rejects the no-op 3·x but accepts the absorbing 3·(2x)", () => {
+    const three = int(3);
+    const x = variable("x");
+    const noop = product([three, x]); // 3·x ~> 3x is no simplification
+    if (noop.kind !== "product") throw new Error("unreachable");
+    expect(
+      combineIntegerFactors.precondition(mkJudgment(equation(noop, int(0))), noop.id, {
+        termA: three.id,
+        termB: x.id,
+      }),
+    ).toBe(false);
+
+    const three2 = int(3);
+    const twoX = neg(product([int(2), variable("x")]));
+    const yes = product([three2, twoX]);
+    if (yes.kind !== "product") throw new Error("unreachable");
+    expect(
+      combineIntegerFactors.precondition(mkJudgment(equation(yes, int(0))), yes.id, {
+        termA: three2.id,
+        termB: twoX.id,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("combine-fractions", () => {
+  // Two fraction terms of a sum, embedded at depth, plus bystanders.
+  const arbFracPart = fc.array(arbExpr.filter((e) => e.kind !== "product"), { minLength: 1, maxLength: 2 });
+  const arbScenario = fc
+    .tuple(
+      arbFracPart,
+      arbFracPart,
+      arbFracPart,
+      arbFracPart,
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.integer({ min: 0, max: 7 }),
+      arbWrap,
+      fc.boolean(),
+      arbExpr,
+    )
+    .map(([n1, d1, n2, d2, extras, posA, posB, wrap, onLhs, other]) => {
+      const fa = fraction(n1, d1);
+      const fb = fraction(n2, d2);
+      const sc = buildNaryScenario("sum", fa, fb, extras, posA, posB, wrap, onLhs, other);
+      return { ...sc, fa: fa.id, fb: fb.id };
+    });
+
+  it("property: adds over a common denominator, preserving the solution set", () => {
+    fc.assert(
+      fc.property(arbScenario, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        const params = { termA: sc.fa, termB: sc.fb };
+        expect(combineFractions.precondition(j, sc.loc, params)).toBe(true);
+        const { equation: after, emits } = combineFractions.apply(j, sc.loc, params);
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders, true);
+      }),
+    );
+  });
+
+  it("builds the textbook shapes", () => {
+    // x/2 + x/3 ~> (x·3 + x·2)/(2·3)
+    const fa = fraction([variable("x")], [int(2)]);
+    const fb = fraction([variable("x")], [int(3)]);
+    const s = sum([fa, fb]);
+    if (s.kind !== "sum") throw new Error("unreachable");
+    const r = combineFractions.apply(mkJudgment(equation(s, int(5))), s.id, { termA: fa.id, termB: fb.id });
+    const expected = fraction(
+      [sum([product([variable("x"), int(3)]), product([variable("x"), int(2)])])],
+      [int(2), int(3)],
+    );
+    expect(eq(r.equation.lhs, expected)).toBe(true);
+
+    // x/2 + 3 ~> (x + 3·2)/2  (a whole term is itself over 1)
+    const fc2 = fraction([variable("x")], [int(2)]);
+    const three = int(3);
+    const s2 = sum([fc2, three]);
+    if (s2.kind !== "sum") throw new Error("unreachable");
+    const r2 = combineFractions.apply(mkJudgment(equation(s2, int(4))), s2.id, { termA: fc2.id, termB: three.id });
+    const expected2 = fraction([sum([variable("x"), product([int(3), int(2)])])], [int(2)]);
+    expect(eq(r2.equation.lhs, expected2)).toBe(true);
+  });
+
+  it("rejects when neither term is a fraction", () => {
+    const s = sum([variable("x"), int(3)]);
+    if (s.kind !== "sum") throw new Error("unreachable");
+    const [a, b] = s.children;
+    expect(
+      combineFractions.precondition(mkJudgment(equation(s, int(0))), s.id, { termA: a!.id, termB: b!.id }),
+    ).toBe(false);
   });
 });
 
@@ -605,6 +860,69 @@ describe("combine-like-factors", () => {
     );
   });
 
+  const arbListScenario = fc
+    .tuple(
+      arbBase,
+      arbMaybeExp,
+      arbMaybeExp,
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.boolean(),
+      fc.boolean(),
+      arbExpr,
+    )
+    .map(([base, expA, expB, extras, posA, posB, inDen, onLhs, other]) => {
+      const termA = expA === undefined ? base : pow(base, int(expA));
+      const termB =
+        expB === undefined ? cloneFresh(base) : pow(cloneFresh(base), int(expB));
+      return buildFractionListScenario(termA, termB, extras, posA, posB, inDen, onLhs, other);
+    });
+
+  it("property: merges inside fraction lists too (the lists are implicit products)", () => {
+    fc.assert(
+      fc.property(arbListScenario, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        const params = { termA: sc.termA, termB: sc.termB };
+        expect(combineLikeFactors.precondition(j, sc.loc, params)).toBe(true);
+        const { equation: after, emits, diff } = combineLikeFactors.apply(j, sc.loc, params);
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        // The bar always survives a same-list merge (two elements became one).
+        expect(findById(after, sc.loc)).toBeDefined();
+        expect(diff.merged.length).toBeLessThanOrEqual(1);
+        for (const m of diff.merged) {
+          expect(findById(after, m.target)).toBeDefined();
+        }
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders);
+      }),
+    );
+  });
+
+  it("merges x·x inside a denominator (the regression that motivated list sites)", () => {
+    const x1 = variable("x");
+    const x2 = variable("x");
+    const f = fraction([int(1)], [x1, x2]);
+    const eqn = equation(f, int(4));
+    const j = mkJudgment(eqn);
+    const params = { termA: x1.id, termB: x2.id };
+    expect(combineLikeFactors.precondition(j, f.id, params)).toBe(true);
+    const r = combineLikeFactors.apply(j, f.id, params);
+    expect(eq(r.equation.lhs, fraction([int(1)], [pow(variable("x"), int(2))]))).toBe(true);
+    expect(findById(r.equation, f.id)).toBeDefined();
+  });
+
+  it("rejects a num/den pair (that is cancellation territory, not combining)", () => {
+    const xn = variable("x");
+    const xd = variable("x");
+    const f = fraction([xn], [xd]);
+    const eqn = equation(f, int(1));
+    expect(
+      combineLikeFactors.precondition(mkJudgment(eqn), f.id, { termA: xn.id, termB: xd.id }),
+    ).toBe(false);
+  });
+
   it("builds the textbook shapes", () => {
     const x1 = variable("x");
     const x2 = variable("x");
@@ -650,6 +968,72 @@ describe("combine-like-factors", () => {
     expect(
       combineLikeFactors.precondition(mkJudgment(eqn2), p2.id, { termA: sym.id, termB: x2.id }),
     ).toBe(false);
+  });
+});
+
+describe("factor-out-negative", () => {
+  // A sum that is a factor of a product with a negative sibling — the spot
+  // the rule is offered. Terms kept non-sum so the sum survives construction.
+  const arbTerm = arbExpr.filter((e) => e.kind !== "sum");
+  const arbScenario = fc
+    .tuple(
+      fc.array(arbTerm, { minLength: 2, maxLength: 3 }),
+      arbExpr.filter((e) => e.kind !== "neg"), // neg(this) is a real Neg sibling
+      fc.boolean(),
+      arbExpr,
+    )
+    .map(([terms, sib, onLhs, other]) => {
+      const s = sum(terms);
+      const prod = product([s, neg(sib)]);
+      return { s, prod, eqn: onLhs ? equation(prod, other) : equation(other, prod) };
+    })
+    .filter((sc) => sc.s.kind === "sum" && sc.prod.kind === "product");
+
+  it("property: −1 factors out exactly (an identity), preserving the solution set", () => {
+    fc.assert(
+      fc.property(arbScenario, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        expect(factorOutNegative.precondition(j, sc.s.id, {})).toBe(true);
+        const { equation: after, emits } = factorOutNegative.apply(j, sc.s.id, {});
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        // The sum kept its id but now hangs under a fresh Neg.
+        const moved = findById(after, sc.s.id);
+        expect(moved?.kind).toBe("sum");
+        expect(findParent(after, sc.s.id)?.kind).toBe("neg");
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+      }),
+    );
+  });
+
+  it("builds the textbook shapes", () => {
+    // (1 − 2x)·(−3) ~> (−(−1 + 2x))·(−3)   [the grouping-sign fix]
+    const binom = sum([int(1), neg(product([int(2), variable("x")]))]);
+    if (binom.kind !== "sum") throw new Error("unreachable");
+    const p = product([binom, neg(int(3))]);
+    const r = factorOutNegative.apply(mkJudgment(equation(p, int(0))), binom.id, {});
+    const expected = product([
+      neg(sum([int(-1), product([int(2), variable("x")])])),
+      neg(int(3)),
+    ]);
+    expect(eq(r.equation.lhs, expected)).toBe(true);
+  });
+
+  it("is offered only with a negative sibling, never on a bare or positive context", () => {
+    const binom = sum([variable("x"), int(3)]);
+    if (binom.kind !== "sum") throw new Error("unreachable");
+    // (x+3)·(−2): offered.
+    const pNeg = product([binom, neg(int(2))]);
+    expect(factorOutNegative.precondition(mkJudgment(equation(pNeg, int(0))), binom.id, {})).toBe(true);
+    // (x+3)·2: positive sibling, NOT offered.
+    const binom2 = sum([variable("x"), int(3)]);
+    if (binom2.kind !== "sum") throw new Error("unreachable");
+    const pPos = product([binom2, int(2)]);
+    expect(factorOutNegative.precondition(mkJudgment(equation(pPos, int(0))), binom2.id, {})).toBe(false);
+    // A top-level sum (not a product factor): NOT offered.
+    const binom3 = sum([variable("x"), int(3)]);
+    if (binom3.kind !== "sum") throw new Error("unreachable");
+    expect(factorOutNegative.precondition(mkJudgment(equation(binom3, int(0))), binom3.id, {})).toBe(false);
   });
 });
 
@@ -713,6 +1097,121 @@ describe("distribute", () => {
   });
 });
 
+describe("split-term", () => {
+  /** coeff·body as a canonical term, mirroring the rule's own builder. */
+  function coeffTerm(b: bigint, body: Expr): Expr {
+    const mag = b < 0n ? -b : b;
+    const core = mag === 1n ? body : product([int(mag), body]);
+    return b < 0n ? neg(core) : core;
+  }
+
+  // Bodies that survive term construction intact: not a Sum (would flatten
+  // into the surrounding sum when bare), not a Neg (coeffTerm would collapse
+  // Neg(Neg)), not an Integer — including inside a Product body, where a
+  // literal child would read as the coefficient instead of `b`.
+  const arbBody = arbExpr.filter(
+    (e) =>
+      e.kind !== "sum" &&
+      e.kind !== "neg" &&
+      e.kind !== "int" &&
+      !(
+        e.kind === "product" &&
+        e.children.some((c) => c.kind === "int" || (c.kind === "neg" && c.child.kind === "int"))
+      ),
+  );
+  const arbCoeff = fc
+    .integer({ min: -9, max: 9 })
+    .filter((b) => b !== 0)
+    .map(BigInt);
+
+  const arbScenario = fc
+    .tuple(
+      arbCoeff,
+      arbBody,
+      fc.integer({ min: -12, max: 12 }).map(BigInt),
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      arbWrap,
+      fc.boolean(),
+      arbExpr,
+    )
+    .filter(([b, , first]) => first !== 0n && first !== b)
+    .map(([b, body, first, extras, pos, wrap, onLhs, other]) => {
+      const term = coeffTerm(b, body);
+      const filler = extras.filter((e) => e.kind !== "sum");
+      const terms: Expr[] = [...filler, int(1)]; // ensure the sum survives as a sum
+      terms.splice(pos % (terms.length + 1), 0, term);
+      const s = sum(terms);
+      if (s.kind !== "sum") throw new Error("scenario sum unexpectedly collapsed");
+      const bystanders = s.children.filter((c) => c.id !== term.id);
+      return {
+        eqn: embed(s, wrap, other, onLhs),
+        loc: s.id,
+        term,
+        body,
+        first,
+        bystanders,
+      };
+    });
+
+  it("property: splits exactly — an identity that preserves the solution set", () => {
+    fc.assert(
+      fc.property(arbScenario, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        const params = { termId: sc.term.id, first: sc.first };
+        expect(splitTerm.precondition(j, sc.loc, params)).toBe(true);
+        const { equation: after, emits } = splitTerm.apply(j, sc.loc, params);
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        // The sum survives with its id, one term longer.
+        const s = findById(after, sc.loc);
+        expect(s).toBeDefined();
+        if (s === undefined || s.kind !== "sum") throw new Error("sum vanished");
+        expect(s.children.length).toBe(sc.bystanders.length + 2);
+        // The first part keeps the original body by identity — except a
+        // Product body, whose root dissolves into the rebuilt term's
+        // flattening; then its children survive instead (splice exception).
+        if (findById(after, sc.body.id) === undefined) {
+          expect(sc.body.kind).toBe("product");
+          for (const child of childrenOf(sc.body)) {
+            expect(findById(after, child.id), `body child ${child.id} vanished`).toBeDefined();
+          }
+        }
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders);
+      }),
+    );
+  });
+
+  it("builds the textbook shape: −6x in x² − 6x + 9 splits to −3x − 3x", () => {
+    const x = variable("x");
+    const mid = neg(product([int(6), variable("x")]));
+    const lhs = sum([pow(x, int(2)), mid, int(9)]);
+    if (lhs.kind !== "sum") throw new Error("unreachable");
+    const eqn = equation(lhs, int(0));
+    const r = splitTerm.apply(mkJudgment(eqn), lhs.id, { termId: mid.id, first: -3n });
+    const expected = sum([
+      pow(variable("x"), int(2)),
+      neg(product([int(3), variable("x")])),
+      neg(product([int(3), variable("x")])),
+      int(9),
+    ]);
+    expect(eq(r.equation.lhs, expected)).toBe(true);
+  });
+
+  it("rejects degenerate splits and bare literals", () => {
+    const term = product([int(6), variable("x")]);
+    const nine = int(9);
+    const lhs = sum([term, nine]);
+    if (lhs.kind !== "sum") throw new Error("unreachable");
+    const j = mkJudgment(equation(lhs, int(0)));
+    expect(splitTerm.precondition(j, lhs.id, { termId: term.id, first: 0n })).toBe(false);
+    expect(splitTerm.precondition(j, lhs.id, { termId: term.id, first: 6n })).toBe(false);
+    expect(splitTerm.precondition(j, lhs.id, { termId: nine.id, first: 4n })).toBe(false);
+    expect(splitTerm.precondition(j, lhs.id, { termId: term.id, first: 2n })).toBe(true);
+  });
+});
+
 describe("factor-out", () => {
   type TermShape = "bare" | "cof" | "neg-bare" | "neg-cof";
   const arbShape = fc.constantFrom<TermShape>("bare", "cof", "neg-bare", "neg-cof");
@@ -772,6 +1271,100 @@ describe("factor-out", () => {
         checkBystandersStable(after, sc.bystanders, true);
       }),
     );
+  });
+
+  // The literal-divisor mode: the grabbed literal, read with its term's
+  // sign, divides the other term's literal and comes out of both whole.
+  const arbDivisorScenario = fc
+    .tuple(
+      fc.integer({ min: 2, max: 9 }).map(BigInt),
+      fc.boolean(), // sign of the divisor
+      fc.integer({ min: -9, max: 9 }).filter((m) => m !== 0).map(BigInt),
+      arbExpr.filter((e) => e.kind !== "sum" && e.kind !== "neg" && e.kind !== "int"),
+      fc.option(
+        arbExpr.filter((e) => e.kind !== "sum" && e.kind !== "neg" && e.kind !== "int"),
+        { nil: undefined },
+      ),
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.integer({ min: 0, max: 7 }),
+      arbWrap,
+      fc.boolean(),
+      arbExpr,
+    )
+    .map(([mag, negA, m, bodyA, bodyB, extras, posA, posB, wrap, onLhs, other]) => {
+      const sa = negA ? -mag : mag;
+      const sb = sa * m;
+      const litA = int(mag); // positive: the raw instance node
+      const termA = sa < 0n ? neg(product([litA, bodyA])) : product([litA, bodyA]);
+      const litB = int(sb < 0n ? -sb : sb);
+      const coreB = bodyB === undefined ? litB : product([litB, bodyB]);
+      const termB = sb < 0n ? neg(coreB) : coreB;
+      const sc = buildNaryScenario("sum", termA, termB, extras, posA, posB, wrap, onLhs, other);
+      return { ...sc, params: { factorA: litA.id, factorB: litB.id }, sa, sb };
+    });
+
+  it("property: a signed literal divisor factors out of both terms soundly", () => {
+    fc.assert(
+      fc.property(arbDivisorScenario, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        expect(factorOut.precondition(j, sc.loc, sc.params)).toBe(true);
+        const { equation: after, emits } = factorOut.apply(j, sc.loc, sc.params);
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders, true);
+      }),
+    );
+  });
+
+  it("factors the signed coefficient out of the constant: −3x + 9 ~> (x + −3)·(−3)", () => {
+    const three = int(3);
+    const x = variable("x");
+    const termA = neg(product([three, x]));
+    const nine = int(9);
+    const s = sum([termA, nine]);
+    if (s.kind !== "sum") throw new Error("unreachable");
+    const r = factorOut.apply(mkJudgment(equation(s, int(0))), s.id, {
+      factorA: three.id,
+      factorB: nine.id,
+    });
+    expect(
+      eq(r.equation.lhs, product([sum([variable("x"), int(-3)]), int(-3)])),
+    ).toBe(true);
+
+    // Positive divisor: 3x + 9 ~> (x + 3)·3, the grabbed 3 surviving by id.
+    const three2 = int(3);
+    const termC = product([three2, variable("x")]);
+    const nine2 = int(9);
+    const s2 = sum([termC, nine2]);
+    if (s2.kind !== "sum") throw new Error("unreachable");
+    const r2 = factorOut.apply(mkJudgment(equation(s2, int(0))), s2.id, {
+      factorA: three2.id,
+      factorB: nine2.id,
+    });
+    expect(eq(r2.equation.lhs, product([sum([variable("x"), int(3)]), int(3)]))).toBe(true);
+    expect(findById(r2.equation, three2.id)).toBeDefined();
+  });
+
+  it("rejects non-divisor literal pairs and ±1 divisors", () => {
+    const nine = int(9);
+    const x = variable("x");
+    const termA = product([nine, x]);
+    const three = int(3);
+    const s = sum([termA, three]);
+    if (s.kind !== "sum") throw new Error("unreachable");
+    const j = mkJudgment(equation(s, int(0)));
+    // 9 does not divide 3 — only the divisor side initiates.
+    expect(factorOut.precondition(j, s.id, { factorA: nine.id, factorB: three.id })).toBe(false);
+
+    const one = int(1);
+    const termC = product([one, variable("x")]);
+    const six = int(6);
+    const s2 = sum([termC, six]);
+    if (s2.kind !== "sum") throw new Error("unreachable");
+    const j2 = mkJudgment(equation(s2, int(0)));
+    expect(factorOut.precondition(j2, s2.id, { factorA: one.id, factorB: six.id })).toBe(false);
   });
 
   it("builds the textbook shapes", () => {

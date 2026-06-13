@@ -16,22 +16,25 @@
  *    drag a factor under the other side, drag a denominator factor across to
  *    clear it. Free-form parameters remain available through Derivation.apply.
  */
-import { allNodes, type Expr, type NodeId } from "./expr.js";
+import { allNodes, eq, type Expr, type NodeId } from "./expr.js";
 import type { Judgment } from "./assumptions.js";
 import type { BranchingRule, Location, Rule } from "./rule.js";
 import { additiveCancellation } from "./rules/additiveCancellation.js";
 import { addToBothSides } from "./rules/addToBothSides.js";
 import { combineIntegerFactors } from "./rules/combineIntegerFactors.js";
 import { combineIntegers } from "./rules/combineIntegers.js";
+import { combineFractions } from "./rules/combineFractions.js";
 import { combineLikeFactors } from "./rules/combineLikeFactors.js";
 import { distribute } from "./rules/distribute.js";
 import { divideBothSides } from "./rules/divideBothSides.js";
 import { expandPower } from "./rules/expandPower.js";
 import { factorInstancesOf, factorOut } from "./rules/factorOut.js";
+import { factorOutNegative } from "./rules/factorOutNegative.js";
 import { dropOneFactor, dropZeroTerm, powerOne, powerZero } from "./rules/identities.js";
 import { moveTermAcross } from "./rules/moveTermAcross.js";
 import { distributePower, negativeExponent, powerOfPower } from "./rules/powers.js";
 import { simplifySqrt, sqrtBothSides, zeroProduct } from "./rules/quadratics.js";
+import { coeffAndBody, splitTerm } from "./rules/splitTerm.js";
 import { quotientOfPowers } from "./rules/quotientOfPowers.js";
 import { squareBothSides } from "./rules/squareBothSides.js";
 import { swapSides } from "./rules/swapSides.js";
@@ -46,6 +49,7 @@ export type AnyRule = Rule<any>;
 export const allRules: readonly AnyRule[] = [
   additiveCancellation,
   addToBothSides,
+  combineFractions,
   combineIntegerFactors,
   combineIntegers,
   combineLikeFactors,
@@ -56,6 +60,7 @@ export const allRules: readonly AnyRule[] = [
   dropZeroTerm,
   expandPower,
   factorOut,
+  factorOutNegative,
   moveTermAcross,
   multiplicativeCancellation,
   multiplyBothSides,
@@ -66,6 +71,7 @@ export const allRules: readonly AnyRule[] = [
   quotientOfPowers,
   reduceIntegerFraction,
   simplifySqrt,
+  splitTerm,
   squareBothSides,
   swapSides,
 ];
@@ -106,6 +112,18 @@ export interface Move {
   readonly dropTarget?: NodeId;
   /** Dispatch through applyBranching/branchingRuleById instead of apply. */
   readonly branching?: boolean;
+}
+
+/** Floor of the integer square root (Newton's method on bigints). */
+function isqrt(n: bigint): bigint {
+  if (n < 2n) return n;
+  let x = n;
+  let y = (x + 1n) / 2n;
+  while (y < x) {
+    x = y;
+    y = (x + n / x) / 2n;
+  }
+  return x;
 }
 
 /** All legal moves for this judgment, every one precondition-checked. */
@@ -167,8 +185,52 @@ export function enumerateMoves(judgment: Judgment): Move[] {
               }
             }
           }
+          // Add two terms over a common denominator (at least one a fraction):
+          // the fraction always takes termA, so the bar is there to work with.
+          if (a.kind === "fraction" || b.kind === "fraction") {
+            const fracId = a.kind === "fraction" ? a.id : b.id;
+            const otherId = a.kind === "fraction" ? b.id : a.id;
+            push(combineFractions, node.id, { termA: fracId, termB: otherId }, a.id, b.id);
+          }
         }
         push(dropZeroTerm, node.id, { termId: a.id }, a.id); // tap
+      }
+      // Tap to factor −1 out of the sum (precondition gates it to a product
+      // factor with a negative sibling — the sign-flip that lets grouping
+      // finish a leading-coefficient-≠1 trinomial).
+      push(factorOutNegative, node.id, {}, node.id);
+      // Curated split-term candidates, the "ac method": in a trinomial
+      // a·B² + b·B + c (integer a, b, c; any order), the middle term taps
+      // apart into p·B + q·B with p + q = b and p·q = a·c — the unique split
+      // that factoring by grouping can finish. Splits exist iff b² − 4ac is
+      // a perfect square; free-form splits stay available via Derivation.
+      if (node.children.length === 3) {
+        const parts = node.children.map((c) => ({ term: c, ...coeffAndBody(c) }));
+        const lit = parts.find((p) => p.body.length === 0);
+        const sq = parts.find(
+          (p) =>
+            p.body.length === 1 &&
+            p.body[0]!.kind === "pow" &&
+            p.body[0]!.exp.kind === "int" &&
+            p.body[0]!.exp.value === 2n,
+        );
+        const sqBase = sq !== undefined && sq.body[0]!.kind === "pow" ? sq.body[0]!.base : undefined;
+        const lin = parts.find(
+          (p) => p !== sq && p.body.length === 1 && sqBase !== undefined && eq(p.body[0]!, sqBase),
+        );
+        if (lit !== undefined && sq !== undefined && lin !== undefined) {
+          const disc = lin.coeff * lin.coeff - 4n * sq.coeff * lit.coeff;
+          if (disc >= 0n) {
+            const root = isqrt(disc);
+            if (root * root === disc) {
+              const p = (lin.coeff - root) / 2n; // integer: disc ≡ b² (mod 4)
+              const q = lin.coeff - p;
+              if (p !== 0n && q !== 0n) {
+                push(splitTerm, node.id, { termId: lin.term.id, first: p }, lin.term.id); // tap
+              }
+            }
+          }
+        }
       }
     }
     // Pair moves inside a Product: integer folding, like-base merging, and
@@ -214,6 +276,19 @@ export function enumerateMoves(judgment: Judgment): Move[] {
           push(quotientOfPowers, node.id, params, d.id, n.id);
         }
       }
+      // Pair moves WITHIN one factor list — the lists are implicit products,
+      // so they offer the same integer folding and like-base merging a
+      // Product's children do (x·x under a bar still merges to x²).
+      for (const list of [node.num, node.den]) {
+        for (const a of list) {
+          for (const b of list) {
+            if (a.id === b.id) continue;
+            const params = { termA: a.id, termB: b.id };
+            push(combineIntegerFactors, node.id, params, a.id, b.id);
+            push(combineLikeFactors, node.id, params, a.id, b.id);
+          }
+        }
+      }
     }
   }
 
@@ -253,7 +328,12 @@ export function enumerateMoves(judgment: Judgment): Move[] {
     for (const f of divisors) {
       push(divideBothSides, eqn.id, { divisor: f }, f.id, other.id);
     }
-    // Drag a denominator factor across to clear it.
+    // Drag a denominator factor across to clear it — dropping on the other
+    // side, or "up" onto the numerator (each num element is a target; there
+    // is no single numerator node). Same rule, same params, same result.
+    // Specific den↔num pair moves (cancellation, reduce, quotient-of-powers)
+    // outrank this in the UI's RULE_PRIORITY when they share a drop point,
+    // so the generic clear only fires where no specific move applies.
     const fractions =
       side.kind === "fraction"
         ? [side]
@@ -263,6 +343,9 @@ export function enumerateMoves(judgment: Judgment): Move[] {
     for (const f of fractions) {
       for (const d of f.den) {
         push(multiplyBothSides, eqn.id, { factor: d }, d.id, other.id);
+        for (const n of f.num) {
+          push(multiplyBothSides, eqn.id, { factor: d }, d.id, n.id);
+        }
       }
     }
   }

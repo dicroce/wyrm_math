@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  allNodes,
+  applyBranchingRule,
+  applyRule,
+  branchingRuleById,
   cloneFresh,
   Derivation,
   enumerateMoves,
   eq,
   equation,
+  exprToString,
   fraction,
   int,
   mkJudgment,
@@ -18,6 +23,7 @@ import {
   variable,
   type Expr,
   type Move,
+  type Node,
 } from "../src/index.js";
 
 const byRule = (moves: Move[], ruleId: string) => moves.filter((m) => m.ruleId === ruleId);
@@ -90,14 +96,19 @@ describe("enumerateMoves", () => {
     expect(handles(moves)).toEqual([x1.id, x2.id].sort());
   });
 
-  it("offers clearing a denominator via multiply-both-sides", () => {
+  it("offers clearing a denominator via multiply-both-sides, dropping across OR up", () => {
+    const num = variable("x");
     const den = int(2);
-    const f = fraction([variable("x")], [den]);
+    const f = fraction([num], [den]);
     const eqn = equation(f, int(1));
     const moves = byRule(enumerateMoves(mkJudgment(eqn)), "multiply-both-sides");
-    expect(moves).toHaveLength(1);
-    expect(moves[0]!.handle).toBe(den.id);
-    expect(moves[0]!.dropTarget).toBe(eqn.rhs.id);
+    // Same grab (the denominator 2), two drop targets: the other side and
+    // each numerator element. Same params either way.
+    expect(moves).toHaveLength(2);
+    expect(moves.every((m) => m.handle === den.id)).toBe(true);
+    expect(moves.map((m) => m.dropTarget).sort()).toEqual([eqn.rhs.id, num.id].sort());
+    const [a, b] = moves;
+    expect(a!.params).toEqual(b!.params);
   });
 
   it("offers product factors as divisors and respects pins", () => {
@@ -279,6 +290,95 @@ describe("enumerateMoves", () => {
     expect(d.current.assumptions).toEqual([]); // the whole trip was assumption-free
   });
 
+  it("enumerates the unique ac-method split on factorable trinomials only", () => {
+    // x² − 6x + 9: D = 0, the split is −3x − 3x.
+    const mid = neg(product([int(6), variable("x")]));
+    const lhs = sum([pow(variable("x"), int(2)), mid, int(9)]);
+    if (lhs.kind !== "sum") throw new Error("unreachable");
+    const splits = byRule(enumerateMoves(mkJudgment(equation(lhs, int(0)))), "split-term");
+    expect(splits).toHaveLength(1);
+    expect(splits[0]!.handle).toBe(mid.id);
+    expect(splits[0]!.dropTarget).toBeUndefined(); // a tap
+    expect(splits[0]!.params).toEqual({ termId: mid.id, first: -3n });
+
+    // x² + x − 6: the bare x splits into −2x + 3x.
+    const bareX = variable("x");
+    const lhs2 = sum([pow(variable("x"), int(2)), bareX, int(-6)]);
+    if (lhs2.kind !== "sum") throw new Error("unreachable");
+    const splits2 = byRule(enumerateMoves(mkJudgment(equation(lhs2, int(0)))), "split-term");
+    expect(splits2).toHaveLength(1);
+    expect(splits2[0]!.params).toEqual({ termId: bareX.id, first: -2n });
+
+    // x² + x + 1 (D < 0) and x² + 4x + 2 (D not a square): nothing offered.
+    for (const c of [int(1), int(2)]) {
+      const mid3 = c.kind === "int" && c.value === 1n ? variable("x") : product([int(4), variable("x")]);
+      const lhs3 = sum([pow(variable("x"), int(2)), mid3, c]);
+      if (lhs3.kind !== "sum") throw new Error("unreachable");
+      expect(byRule(enumerateMoves(mkJudgment(equation(lhs3, int(0)))), "split-term")).toEqual([]);
+    }
+  });
+
+  // THE escalating-grab regression: in (−3)(−2x) the −3 now has a fold of its
+  // own (absorb into the −2x coefficient → 6x), so it is individually
+  // grabbable; and x·(−1) folds to −x.
+  it("offers −3·−2x ~> 6x and x·(−1) ~> −x as integer-factor folds", () => {
+    const neg3 = neg(int(3));
+    const neg2x = neg(product([int(2), variable("x")]));
+    const p = product([neg3, neg2x]);
+    if (p.kind !== "product") throw new Error("unreachable");
+    const j = mkJudgment(equation(p, int(0)));
+    const m = movesFrom(j, neg3.id).find(
+      (mv) => mv.ruleId === "combine-integer-factors" && mv.dropTarget === neg2x.id,
+    );
+    expect(m).toBeDefined();
+    expect(eq(ruleById(m!.ruleId).apply(j, m!.location, m!.params).equation.lhs,
+      product([int(6), variable("x")]))).toBe(true);
+
+    const x = variable("x");
+    const negOne = neg(int(1));
+    const p2 = product([x, negOne]);
+    if (p2.kind !== "product") throw new Error("unreachable");
+    const j2 = mkJudgment(equation(p2, int(0)));
+    const m2 = movesFrom(j2, x.id).find(
+      (mv) => mv.ruleId === "combine-integer-factors" && mv.dropTarget === negOne.id,
+    );
+    expect(m2).toBeDefined();
+    expect(eq(ruleById(m2!.ruleId).apply(j2, m2!.location, m2!.params).equation.lhs,
+      neg(variable("x")))).toBe(true);
+  });
+
+  // THE xx-in-a-denominator regression: like factors under a bar still merge.
+  it("drag-merges x·x inside a denominator to x², then offers the expand tap back", () => {
+    const x1 = variable("x");
+    const x2 = variable("x");
+    const f = fraction([int(1)], [x1, x2]);
+    const eqn = equation(f, int(4));
+    const d = new Derivation(eqn);
+
+    // Both drag directions are offered between the two denominator x's.
+    const m1 = movesFrom(d.current, x1.id).find(
+      (m) => m.ruleId === "combine-like-factors" && m.dropTarget === x2.id,
+    );
+    const m2 = movesFrom(d.current, x2.id).find(
+      (m) => m.ruleId === "combine-like-factors" && m.dropTarget === x1.id,
+    );
+    expect(m1).toBeDefined();
+    expect(m2).toBeDefined();
+
+    d.apply(ruleById(m1!.ruleId), m1!.location, m1!.params);
+    const lhs = d.current.equation.lhs;
+    expect(eq(lhs, fraction([int(1)], [pow(variable("x"), int(2))]))).toBe(true);
+    expect(lhs.id).toBe(f.id); // the bar survived in place
+    expect(d.current.assumptions).toEqual([]); // merging emits nothing
+
+    // The result offers the follow-up a user expects: tap x² to expand it.
+    if (lhs.kind !== "fraction") throw new Error("unreachable");
+    const squared = lhs.den[0]!;
+    expect(
+      movesFrom(d.current, squared.id).some((m) => m.ruleId === "expand-power"),
+    ).toBe(true);
+  });
+
   /** Find a move by handle and rule, or fail loudly. */
   function moveFor(d: Derivation, handle: string, ruleId: string): Move {
     const m = movesFrom(d.current, handle).find((mv) => mv.ruleId === ruleId);
@@ -289,6 +389,152 @@ describe("enumerateMoves", () => {
   function applyMove(d: Derivation, m: Move): void {
     d.apply(ruleById(m.ruleId), m.location, m.params);
   }
+
+  // THE quadratic regression: x² − 6x + 9 = 0 solves to x = 3 with only
+  // enumerated gestures — the ac-method split, factoring by grouping (incl.
+  // the literal-divisor factor-out that reaches the constant), zero-product.
+  it("solves x² − 6x + 9 = 0 to x = 3 using only enumerated moves", () => {
+    const mid = neg(product([int(6), variable("x")]));
+    const lhs0 = sum([pow(variable("x"), int(2)), mid, int(9)]);
+    if (lhs0.kind !== "sum") throw new Error("unreachable");
+    const d = new Derivation(equation(lhs0, int(0)));
+
+    // 1. Tap −6x: the curated ac split, −3x − 3x.
+    applyMove(d, moveFor(d, mid.id, "split-term"));
+    let L = d.current.equation.lhs;
+    if (L.kind !== "sum") throw new Error("unreachable");
+    expect(L.children).toHaveLength(4);
+
+    // 2. Tap x² open: x·x exposes the instance the grouping grabs.
+    const sq = L.children.find((c) => c.kind === "pow")!;
+    applyMove(d, moveFor(d, sq.id, "expand-power"));
+    L = d.current.equation.lhs;
+    if (L.kind !== "sum") throw new Error("unreachable");
+
+    // 3. Drag the x of x·x onto the first −3x: (x + −3)·x.
+    const xx = L.children.find((c) => c.kind === "product");
+    if (xx === undefined || xx.kind !== "product") throw new Error("unreachable");
+    const firstNeg = L.children.find((c) => c.kind === "neg")!;
+    const m3 = movesFrom(d.current, xx.children[0]!.id).find(
+      (m) => m.ruleId === "factor-out" && m.dropTarget === firstNeg.id,
+    );
+    expect(m3).toBeDefined();
+    applyMove(d, m3!);
+    L = d.current.equation.lhs;
+    if (L.kind !== "sum") throw new Error("unreachable");
+
+    // 4. Drag the 3 of the remaining −3x onto the 9: the literal-divisor
+    // factor-out — (x + −3)·(−3).
+    const negTerm = L.children.find((c) => c.kind === "neg");
+    if (negTerm === undefined || negTerm.kind !== "neg" || negTerm.child.kind !== "product") {
+      throw new Error("unreachable");
+    }
+    const three = negTerm.child.children.find((c) => c.kind === "int")!;
+    const nine = L.children.find((c) => c.kind === "int")!;
+    const m4 = movesFrom(d.current, three.id).find(
+      (m) => m.ruleId === "factor-out" && m.dropTarget === nine.id,
+    );
+    expect(m4).toBeDefined();
+    applyMove(d, m4!);
+    L = d.current.equation.lhs;
+    if (L.kind !== "sum") throw new Error("unreachable");
+    expect(L.children).toHaveLength(2);
+
+    // 5. Drag one (x + −3) onto the other term: (x + −3)(x + −3).
+    const t1 = L.children[0]!;
+    const t2 = L.children[1]!;
+    if (t1.kind !== "product") throw new Error("unreachable");
+    const groupSum = t1.children.find((c) => c.kind === "sum")!;
+    const m5 = movesFrom(d.current, groupSum.id).find(
+      (m) => m.ruleId === "factor-out" && m.dropTarget === t2.id,
+    );
+    expect(m5).toBeDefined();
+    applyMove(d, m5!);
+    const P = d.current.equation.lhs;
+    expect(
+      eq(P, product([sum([variable("x"), int(-3)]), sum([variable("x"), int(-3)])])),
+    ).toBe(true);
+
+    // 6. Tap the product: zero-product (both arms read x − 3 = 0).
+    const zp = moveFor(d, P.id, "zero-product");
+    expect(zp.branching).toBe(true);
+    d.applyBranching(branchingRuleById(zp.ruleId), zp.location, zp.params);
+    L = d.current.equation.lhs;
+    if (L.kind !== "sum") throw new Error("unreachable");
+
+    // 7–8. Drag the −3 across, drop the +0.
+    const negThree = L.children.find((c) => c.kind === "neg")!;
+    applyMove(d, moveFor(d, negThree.id, "move-term-across"));
+    const R = d.current.equation.rhs;
+    if (R.kind !== "sum") throw new Error("unreachable");
+    const zero = R.children.find((c) => c.kind === "int" && c.value === 0n)!;
+    applyMove(d, moveFor(d, zero.id, "drop-zero-term"));
+
+    expect(eq(d.current.equation, equation(variable("x"), int(3)))).toBe(true);
+    expect(d.current.assumptions).toEqual([]); // the whole factoring is exact
+  });
+
+  // THE leading-coefficient-≠1 quadratic: 2x²+5x−3=0 factors to (x+3)(2x−1)
+  // and solves to x=−3 and x=1/2 — the path factor-out-negative unblocks.
+  it("solves 2x²+5x−3=0 to x=−3 and x=1/2 using only enumerated moves", () => {
+    const j0 = mkJudgment(
+      equation(sum([product([int(2), pow(variable("x"), int(2))]), product([int(5), variable("x")]), int(-3)]), int(0)),
+    );
+    const str = (jj: typeof j0) => exprToString(jj.equation);
+    const result = (jj: typeof j0, m: Move) =>
+      exprToString(applyRule(jj, ruleById(m.ruleId), m.location, m.params).judgment.equation);
+    const step = (jj: typeof j0, pred: (m: Move) => boolean): ReturnType<typeof mkJudgment> => {
+      const m = enumerateMoves(jj).find(pred);
+      expect(m, `no move at "${str(jj)}"`).toBeDefined();
+      return applyRule(jj, ruleById(m!.ruleId), m!.location, m!.params).judgment;
+    };
+
+    let j = step(j0, (m) => m.ruleId === "split-term");
+    j = step(j, (m) => m.ruleId === "expand-power");
+    j = step(j, (m) => m.ruleId === "factor-out" && result(j, m).startsWith("((((2 * x) + -1) * x)"));
+    j = step(j, (m) => m.ruleId === "factor-out" && result(j, m).includes("(1 + -(2 * x)) * -3"));
+    j = step(j, (m) => m.ruleId === "factor-out-negative");
+    j = step(j, (m) => m.ruleId === "combine-integer-factors" && result(j, m).includes("3 * (-1 + (2 * x))"));
+    j = step(j, (m) => m.ruleId === "factor-out" && /\(x \+ 3\)|\(3 \+ x\)/.test(result(j, m)));
+
+    // Factored — under multiset eq the term order doesn't matter.
+    expect(
+      eq(j.equation.lhs, product([sum([variable("x"), int(3)]), sum([product([int(2), variable("x")]), int(-1)])])),
+    ).toBe(true);
+
+    // Zero-product splits into the two linear factors.
+    const zp = enumerateMoves(j).find((m) => m.ruleId === "zero-product");
+    expect(zp).toBeDefined();
+    const arms = applyBranchingRule(j, branchingRuleById(zp!.ruleId), zp!.location, zp!.params);
+    expect(arms).toHaveLength(2);
+
+    // Solve each arm with explicit moves; collect the roots.
+    const node = (jj: ReturnType<typeof mkJudgment>, pred: (n: Node) => boolean) =>
+      [...allNodes(jj.equation)].find(pred) as Expr;
+    const moveFrom = (jj: ReturnType<typeof mkJudgment>, ruleId: string, handlePred: (n: Node) => boolean) =>
+      movesFrom(jj, node(jj, handlePred).id).find((m) => m.ruleId === ruleId)!;
+    const ap = (jj: ReturnType<typeof mkJudgment>, m: Move) =>
+      applyRule(jj, ruleById(m.ruleId), m.location, m.params).judgment;
+
+    const roots = new Set<string>();
+    for (const arm of arms) {
+      let a = arm.judgment;
+      const c = (a.equation.lhs.kind === "sum" ? a.equation.lhs : a.equation.rhs) as Expr;
+      if (c.kind !== "sum") throw new Error("expected a linear sum arm");
+      const constTerm = c.children.find((t) => t.kind === "int" || (t.kind === "neg" && t.child.kind === "int"))!;
+      a = ap(a, moveFrom(a, "move-term-across", (n) => n.id === constTerm.id));
+      a = ap(a, moveFrom(a, "drop-zero-term", (n) => n.kind === "int" && n.value === 0n));
+      // Arm B still has a 2·x; divide it out.
+      const two = [...allNodes(a.equation)].find((n) => n.kind === "int" && n.value === 2n && a.equation.lhs.kind === "product");
+      if (two !== undefined) {
+        a = ap(a, movesFrom(a, two.id).find((m) => m.ruleId === "divide-both-sides")!);
+        a = ap(a, [...allNodes(a.equation)].flatMap((n) => movesFrom(a, n.id)).find((m) => m.ruleId === "multiplicative-cancellation")!);
+      }
+      roots.add(exprToString(a.equation));
+    }
+    expect(roots.has("x = -3")).toBe(true);
+    expect(roots.has("x = ((1) / (2))")).toBe(true);
+  });
 
   // THE like-terms regression: 3x + 2x = 10 drag-solves to x = 2.
   it("drag-solves 3x + 2x = 10 to x = 2 using only enumerated moves", () => {
