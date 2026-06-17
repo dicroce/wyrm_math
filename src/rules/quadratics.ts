@@ -14,6 +14,7 @@ import {
   fraction,
   int,
   neg,
+  product,
   replaceTermRespectingInvariants,
   sqrt,
   sum,
@@ -266,18 +267,20 @@ export const quadraticFormula: BranchingRule<NoParams> = {
       throw new RulePreconditionViolation(this.id, "not an expanded quadratic equal to zero");
     }
     const { v, a, b, c } = r;
-    const discriminant = b * b - 4n * a * c;
-    const twoA = rationalToExpr(new Rational(2n * a));
-    const negB = new Rational(-b);
-
-    const branch = (sign: 1n | -1n, label: string): BranchOutcome => {
-      // int(discriminant) is Neg(Int) when D < 0 → √ evaluates undefined.
-      const radical = sign === 1n ? sqrt(int(discriminant)) : neg(sqrt(int(discriminant)));
-      const numerator = b === 0n ? radical : sum([rationalToExpr(negB), radical]);
-      const rhs = fraction([numerator], [twoA]);
+    const branch = (positive: boolean, label: string): BranchOutcome => {
+      // The discriminant is LEFT UNEVALUATED — `b·b − 4·a·c` with the
+      // coefficients substituted — so squaring, multiplying and subtracting are
+      // the learner's gestures (the journey, not the destination). Integer
+      // products mean the existing fold rules (combine-integer-factors /
+      // combine-integers) carry the arithmetic, and simplify-sqrt finishes the
+      // √. A negative result leaves √(negative) — "no real solution".
+      const disc = sum([product([int(b), int(b)]), neg(product([int(4n), int(a), int(c)]))]);
+      const radical = positive ? sqrt(disc) : neg(sqrt(disc));
+      const numerator = sum([rationalToExpr(new Rational(-b)), radical]);
+      const rhs = fraction([numerator], [rationalToExpr(new Rational(2n * a))]);
       const eqn: Equation = { ...tree, lhs: variable(v), rhs, relation: "=" };
       return { label, equation: eqn, emits: [], diff: { ...idSetDiff(tree, eqn), merged: [], moved: [] } };
     };
-    return [branch(1n, "+ root"), branch(-1n, "− root")];
+    return [branch(true, "+ root"), branch(false, "− root")];
   },
 };
