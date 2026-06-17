@@ -67,14 +67,20 @@ square. All three trace to one wall — see the number tower below.
 ### 2. The number tower (the gates)
 The recurring wall. Each rung keeps the exactness discipline — we never
 approximate in *reasoning*.
-- [ ] **Quadratic irrationals** `p + q√d` as first-class exact values —
+- [~] **Quadratic irrationals** `p + q√d` as first-class exact values —
   carry them through arithmetic and through `truthValue` checking. Unlocks
-  the **quadratic formula**, **completing the square**, `x² = 5`, and every
-  quadratic that doesn't factor rationally. Seed already exists: the `Sqrt`
-  node + exact perfect-square evaluation.
+  the **quadratic formula**, `x² = 5`, and every quadratic that doesn't factor
+  rationally. Seed already exists: the `Sqrt` node + exact perfect-square
+  evaluation. **In progress** on branch `quadratic-surds` — see
+  `docs/quadratic-surds.md`. Scope this pass: exact surd *values* (equality),
+  radical simplification, and the **quadratic-formula** rule.
+  Deferred from this pass (available next steps):
+  - [ ] Exact surd **ordering** → inequalities with irrational bounds.
+  - [ ] **Complete-the-square** as a shown-work alternative to the formula.
 - [ ] **Complex numbers** `a + bi` — unlocks no-real-root quadratics and is
-  the honest answer to `x² + 4 = 0`.
-- [ ] (Further out) general **algebraic numbers**.
+  the honest answer to `x² + 4 = 0` (this pass reports "no real solution").
+- [ ] (Further out) general **algebraic numbers** / nested radicals — a
+  different representation (minimal polynomial or radical towers).
 
 ### 3. Algebra 2 manipulation
 - [ ] **Rational expressions** — full add / subtract / multiply / divide
