@@ -19,8 +19,9 @@ import {
   type Pow,
   type Product,
 } from "../expr.js";
-import { sqrtRational } from "../eval.js";
+import { exactToExpr } from "../eval.js";
 import { Rational } from "../rational.js";
+import { squareFreeFactor, Surd } from "../surd.js";
 import {
   idSetDiff,
   RulePreconditionViolation,
@@ -146,36 +147,39 @@ function factorLabel(factor: Expr): string {
   }
 }
 
-/** Tap √9 down to 3 — exact perfect squares only. */
+/** Tap a square root to simplify it: evaluate a perfect square (√9 → 3) or pull
+ *  out its largest square factor (√8 → 2√2). Integer radicands only; a
+ *  square-free radicand (√7) is already simplest and a negative one has no real
+ *  value — neither offers the move. */
 export const simplifySqrt: Rule<NoParams> = {
   id: "simplify-sqrt",
-  description: "Evaluate the square root of a perfect-square literal.",
+  description: "Simplify a square root: evaluate it or pull out its square factor.",
 
   precondition(judgment, location, _params) {
     const node = findById(judgment.equation, location);
-    if (node === undefined || node.kind !== "sqrt") return false;
-    if (node.child.kind !== "int") return false;
-    return sqrtRational(new Rational(node.child.value)) !== undefined;
+    if (node === undefined || node.kind !== "sqrt" || node.child.kind !== "int") return false;
+    const n = node.child.value; // Integer invariant: n ≥ 0
+    return n === 0n || squareFreeFactor(n).coeff > 1n;
   },
 
   apply(judgment, location, _params): RuleApplication {
     if (!this.precondition(judgment, location, _params)) {
-      throw new RulePreconditionViolation(this.id, "not a perfect-square literal radical");
+      throw new RulePreconditionViolation(this.id, "radical has no square factor to extract");
     }
     const tree = judgment.equation;
     const node = findById(tree, location)!;
     if (node.kind !== "sqrt" || node.child.kind !== "int") {
       throw new RulePreconditionViolation(this.id, "unreachable");
     }
-    const root = sqrtRational(new Rational(node.child.value))!;
-    const folded = int(root.num);
-    const tree2 = replaceTermRespectingInvariants(tree, node.id, folded);
+    // n ≥ 0, so Surd.sqrt is defined; exactToExpr renders √9 → 3, √8 → 2√2, …
+    const simplified = exactToExpr(Surd.sqrt(new Rational(node.child.value))!);
+    const tree2 = replaceTermRespectingInvariants(tree, node.id, simplified);
     return {
       equation: tree2,
       emits: [],
       diff: {
         ...idSetDiff(tree, tree2),
-        merged: [{ sources: [location], target: folded.id }],
+        merged: [{ sources: [location], target: simplified.id }],
         moved: [],
       },
     };

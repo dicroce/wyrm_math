@@ -21,7 +21,7 @@ import { Rational } from "./rational.js";
 const ONE = 1n;
 
 /** Write n = coeff²·radicand with radicand square-free (n ≥ 1). */
-function squareFreeFactor(n: bigint): { coeff: bigint; radicand: bigint } {
+export function squareFreeFactor(n: bigint): { coeff: bigint; radicand: bigint } {
   let coeff = 1n;
   let rem = n;
   let d = 2n;

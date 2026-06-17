@@ -118,20 +118,33 @@ describe("zero-product", () => {
 });
 
 describe("simplify-sqrt", () => {
-  it("evaluates perfect squares and rejects everything else", () => {
+  it("evaluates perfect squares and pulls out square factors", () => {
     const nine = sqrt(int(9));
-    const eqn = equation(variable("x"), nine);
-    const j = mkJudgment(eqn);
-    expect(simplifySqrt.precondition(j, nine.id, {})).toBe(true);
-    const { equation: after } = simplifySqrt.apply(j, nine.id, {});
-    expect(eq(after, equation(variable("x"), int(3)))).toBe(true);
+    const jNine = mkJudgment(equation(variable("x"), nine));
+    expect(simplifySqrt.precondition(jNine, nine.id, {})).toBe(true);
+    expect(eq(simplifySqrt.apply(jNine, nine.id, {}).equation, equation(variable("x"), int(3)))).toBe(
+      true,
+    );
 
+    // √8 → 2√2 (pull out the square factor)
     const eight = sqrt(int(8));
-    const eqn2 = equation(variable("x"), eight);
-    expect(simplifySqrt.precondition(mkJudgment(eqn2), eight.id, {})).toBe(false);
+    const jEight = mkJudgment(equation(variable("x"), eight));
+    expect(simplifySqrt.precondition(jEight, eight.id, {})).toBe(true);
+    const expected = equation(variable("x"), product([int(2), sqrt(int(2))]));
+    expect(eq(simplifySqrt.apply(jEight, eight.id, {}).equation, expected)).toBe(true);
+  });
+
+  it("rejects an already-simplest or negative radical", () => {
+    // √7 is square-free — already simplest, no move.
+    const seven = sqrt(int(7));
+    expect(simplifySqrt.precondition(mkJudgment(equation(variable("x"), seven)), seven.id, {})).toBe(
+      false,
+    );
+    // √(−9) has no real value (it parses as √(Neg 9), child isn't an int).
     const negNine = sqrt(int(-9));
-    const eqn3 = equation(variable("x"), negNine);
-    expect(simplifySqrt.precondition(mkJudgment(eqn3), negNine.id, {})).toBe(false);
+    expect(
+      simplifySqrt.precondition(mkJudgment(equation(variable("x"), negNine)), negNine.id, {}),
+    ).toBe(false);
   });
 });
 

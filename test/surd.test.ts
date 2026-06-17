@@ -1,5 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import { evalExpr, exactToExpr } from "../src/index.js";
 import { Rational } from "../src/rational.js";
 import { Surd } from "../src/surd.js";
 import { arbRational } from "./gen.js";
@@ -86,6 +87,14 @@ describe("Surd", () => {
         fc.property(arbSurd, (x) => {
           fc.pre(!x.isZero());
           expect(x.mul(x.inverse()!).equals(Surd.one)).toBe(true);
+        }),
+      );
+    });
+
+    it("exactToExpr round-trips through evalExpr", () => {
+      fc.assert(
+        fc.property(arbSurd, (s) => {
+          expect(evalExpr(exactToExpr(s), new Map<string, Rational>()).equals(s)).toBe(true);
         }),
       );
     });

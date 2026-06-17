@@ -150,6 +150,9 @@ already exists.
 
 ### Deferred — available next steps (tracked in todo.md)
 
+- **Radical arithmetic rules** beyond `simplify-sqrt`: `√a·√b → √(ab)`, combine
+  like radicals `q√n + r√n → (q+r)√n`, rationalize a surd denominator. Not on
+  the quadratic-formula path, so split out of Phase 3 into a focused pass.
 - Exact surd **ordering** → inequalities with irrational bounds.
 - **Complex numbers** → honest answers for negative discriminants.
 - **Complete-the-square** as a shown-work alternative to the formula.

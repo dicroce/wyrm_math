@@ -90,6 +90,7 @@ export {
   evalExpr,
   truthValue,
   rationalToExpr,
+  exactToExpr,
   sqrtRational,
   UnboundVariable,
   NonIntegerExponent,

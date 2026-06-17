@@ -1,4 +1,4 @@
-import { fraction, int, type Equation, type Expr } from "./expr.js";
+import { fraction, int, neg, product, sqrt, sum, type Equation, type Expr } from "./expr.js";
 import { DivisionByZero, Rational } from "./rational.js";
 import { Surd } from "./surd.js";
 
@@ -103,6 +103,28 @@ export function evalExpr(e: Expr, env: Env): Surd {
 export function rationalToExpr(r: Rational): Expr {
   if (r.den === 1n) return int(r.num);
   return fraction([int(r.num)], [int(r.den)]);
+}
+
+/** One `c·√n` term (n > 1) as a clean signed Expr: √n, 2√3, −√3, (1/2)√5, … */
+function radicalTerm(c: Rational, n: bigint): Expr {
+  const negative = c.compare(Rational.zero) < 0;
+  const mag = negative ? c.neg() : c;
+  const body = mag.equals(Rational.one) ? sqrt(int(n)) : product([rationalToExpr(mag), sqrt(int(n))]);
+  return negative ? neg(body) : body;
+}
+
+/** Exact-literal Expr for a Surd: the rational part plus each c·√n term, built
+ *  through the smart constructors so all structural invariants hold. */
+export function exactToExpr(s: Surd): Expr {
+  const terms: Expr[] = [];
+  const rat = s.terms.get(1n);
+  if (rat !== undefined) terms.push(rationalToExpr(rat));
+  for (const [n, c] of s.terms) {
+    if (n !== 1n) terms.push(radicalTerm(c, n));
+  }
+  if (terms.length === 0) return int(0n);
+  if (terms.length === 1) return terms[0]!;
+  return sum(terms);
 }
 
 /**
