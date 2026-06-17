@@ -58,9 +58,19 @@ square. All three trace to one wall — see the number tower below.
 ## The climb (rungs, roughly in dependency order)
 
 ### 1. Finish Algebra 1 manipulation
-- [ ] **Systems of equations** — multi-equation state; substitution &
-  elimination as gestures. (The biggest structural addition: today the engine
-  is single-equation.)
+- [ ] **Multi-equation state** — the biggest structural addition: today a
+  `Derivation` node holds exactly ONE equation. This single capability underpins
+  several things that all want a second, independently-manipulable equation
+  linked to the first:
+  - **Systems of equations** — substitution & elimination as gestures.
+  - A **scratchpad / side-by-side equation** in the app (e.g. working a formula
+    off to the side, computing a discriminant separately) — that's a UI
+    *presentation* of multi-equation state, not a separate feature.
+  The hard part is the shared core: **substitution between equations** (moving a
+  result from one into another) plus move-restrictions so terms don't wander
+  across. Build it once, generally — don't bolt a one-off side-equation onto a
+  specific rule. (Branching already gives *disjunctive* sibling equations; this
+  is the *conjunctive* / auxiliary case.)
 - [ ] **Compound inequalities** — an interval / conjunction representation
   (today a judgment carries a single relation).
 
