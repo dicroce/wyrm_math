@@ -36,6 +36,7 @@ function isUndefinedness(err: unknown): boolean {
   );
 }
 import { DivisionByZero, Rational } from "./rational.js";
+import { Surd } from "./surd.js";
 
 export type AssumptionOrigin =
   | { readonly kind: "rule"; readonly stepId: string }
@@ -138,7 +139,10 @@ export type Sign = "positive" | "negative" | "zero" | "unknown";
 export function signOf(expr: Expr, pins: Env): Sign {
   try {
     const v = evalExpr(expr, pins);
-    return v.isZero() ? "zero" : v.num > 0n ? "positive" : "negative";
+    if (v.isZero()) return "zero";
+    const r = v.asRational();
+    if (r === undefined) return "unknown"; // irrational sign — deferred (surd order)
+    return r.num > 0n ? "positive" : "negative";
   } catch (err) {
     if (isUndefinedness(err)) return "unknown";
     throw err;
@@ -173,7 +177,7 @@ export function restrictionStatus(
   pins: Env,
 ): RestrictionStatus {
   try {
-    return evalExpr(r.expr, pins).equals(r.value) ? "fails" : "holds";
+    return evalExpr(r.expr, pins).equals(Surd.rational(r.value)) ? "fails" : "holds";
   } catch (err) {
     if (isUndefinedness(err)) return "unknown";
     throw err;
@@ -235,7 +239,7 @@ export function envSatisfiesAssumptions(judgment: Judgment, env: Env): boolean {
       if (v === undefined || !v.equals(a.value)) return false;
     } else if (a.kind === "restriction") {
       try {
-        if (evalExpr(a.expr, env).equals(a.value)) return false;
+        if (evalExpr(a.expr, env).equals(Surd.rational(a.value))) return false;
       } catch {
         return false; // restriction undefined at this point — not satisfied
       }

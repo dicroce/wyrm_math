@@ -235,12 +235,13 @@ describe("multiply-both-sides (Extension polarity)", () => {
   it("property: solutions are NEVER lost (one-direction check)", () => {
     fc.assert(
       fc.property(arbExpr, arbExpr, arbEnv, (lhs, factor, env) => {
-        let v: Rational;
+        let v: Rational | undefined;
         try {
-          v = evalExpr(lhs, env);
+          v = evalExpr(lhs, env).asRational();
         } catch {
           return; // lhs undefined at this sample point
         }
+        if (v === undefined) return; // irrational sample — skip (surd-aware)
         // env satisfies this equation by construction.
         const eqn = equation(lhs, rationalToExpr(v));
         expect(truthValue(eqn, env)).toBe(true);
@@ -265,12 +266,13 @@ describe("square-both-sides (Extension polarity)", () => {
   it("property: solutions are NEVER lost (one-direction check)", () => {
     fc.assert(
       fc.property(arbExpr, arbEnv, (lhs, env) => {
-        let v: Rational;
+        let v: Rational | undefined;
         try {
-          v = evalExpr(lhs, env);
+          v = evalExpr(lhs, env).asRational();
         } catch {
           return;
         }
+        if (v === undefined) return; // irrational sample — skip (surd-aware)
         const eqn = equation(lhs, rationalToExpr(v)); // env satisfies by construction
         const { judgment: after } = applyRule(mkJudgment(eqn), squareBothSides, eqn.id, {});
         const ext = after.assumptions.find((a) => a.kind === "extension") as Extension;
@@ -315,12 +317,13 @@ describe("case split", () => {
         arbEnv,
         arbEnvs,
         (lhs, vName, env0, envs) => {
-          let v: Rational;
+          let v: Rational | undefined;
           try {
-            v = evalExpr(lhs, env0);
+            v = evalExpr(lhs, env0).asRational();
           } catch {
             return;
           }
+          if (v === undefined) return; // irrational sample — skip (surd-aware)
           const eqn = equation(lhs, rationalToExpr(v)); // env0 is a solution
           const d = new Derivation(eqn);
           const { restricted, pinned } = d.caseSplit(divideBothSides, eqn.id, {

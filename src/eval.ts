@@ -1,5 +1,6 @@
 import { fraction, int, type Equation, type Expr } from "./expr.js";
 import { DivisionByZero, Rational } from "./rational.js";
+import { Surd } from "./surd.js";
 
 /** Variable assignment used by the substitution evaluator. */
 export type Env = ReadonlyMap<string, Rational>;
@@ -18,10 +19,12 @@ export class NonIntegerExponent extends Error {
   }
 }
 
-/** √v has no exact rational value (negative, or not a perfect square). */
+/** √v has no exact value in the engine's number domain: a NEGATIVE radicand
+ *  (complex — deferred) or a NESTED radical that escapes the surd field. A
+ *  non-perfect-square like √2 is no longer inexact — it's an exact Surd. */
 export class InexactSqrt extends Error {
   constructor() {
-    super("square root is not an exact rational");
+    super("square root has no exact value here (negative or nested)");
     this.name = "InexactSqrt";
   }
 }
@@ -48,39 +51,49 @@ export function sqrtRational(v: Rational): Rational | undefined {
 }
 
 /**
- * Exact evaluation under a variable assignment. Throws DivisionByZero when a
- * denominator vanishes, UnboundVariable for missing assignments, and
- * NonIntegerExponent for exponents outside exact rational arithmetic.
+ * Exact evaluation under a variable assignment, over the surd-closed exact
+ * domain (`Surd`; a Rational is the degenerate element). Throws DivisionByZero
+ * when a denominator vanishes, UnboundVariable for missing assignments,
+ * NonIntegerExponent for non-integer exponents, and InexactSqrt where a root
+ * has no exact value (negative radicand → complex; nested radical → out of the
+ * surd field). These are the engine's UNDEFINED POINTS — never approximated.
  */
-export function evalExpr(e: Expr, env: Env): Rational {
+export function evalExpr(e: Expr, env: Env): Surd {
   switch (e.kind) {
     case "int":
-      return new Rational(e.value);
+      return Surd.rational(new Rational(e.value));
     case "var": {
       const v = env.get(e.name);
       if (v === undefined) throw new UnboundVariable(e.name);
-      return v;
+      return Surd.rational(v);
     }
     case "neg":
       return evalExpr(e.child, env).neg();
     case "sum":
-      return e.children.reduce((acc, c) => acc.add(evalExpr(c, env)), Rational.zero);
+      return e.children.reduce((acc, c) => acc.add(evalExpr(c, env)), Surd.zero);
     case "product":
-      return e.children.reduce((acc, c) => acc.mul(evalExpr(c, env)), Rational.one);
+      return e.children.reduce((acc, c) => acc.mul(evalExpr(c, env)), Surd.one);
     case "fraction": {
-      const num = e.num.reduce((acc, c) => acc.mul(evalExpr(c, env)), Rational.one);
-      const den = e.den.reduce((acc, c) => acc.mul(evalExpr(c, env)), Rational.one);
-      return num.div(den);
+      const num = e.num.reduce((acc, c) => acc.mul(evalExpr(c, env)), Surd.one);
+      const den = e.den.reduce((acc, c) => acc.mul(evalExpr(c, env)), Surd.one);
+      if (den.isZero()) throw new DivisionByZero();
+      const q = num.div(den);
+      if (q === undefined) throw new InexactSqrt(); // multiquadratic denominator — out of scope
+      return q;
     }
     case "pow": {
-      const exp = evalExpr(e.exp, env);
-      if (!exp.isInteger()) throw new NonIntegerExponent();
+      const exp = evalExpr(e.exp, env).asRational();
+      if (exp === undefined || !exp.isInteger()) throw new NonIntegerExponent();
       const base = evalExpr(e.base, env);
-      return base.powInt(exp.num);
+      const r = base.powInt(exp.num);
+      if (r === undefined) throw base.isZero() ? new DivisionByZero() : new InexactSqrt();
+      return r;
     }
     case "sqrt": {
-      const v = sqrtRational(evalExpr(e.child, env));
-      if (v === undefined) throw new InexactSqrt();
+      const radicand = evalExpr(e.child, env).asRational();
+      if (radicand === undefined) throw new InexactSqrt(); // nested radical
+      const v = Surd.sqrt(radicand);
+      if (v === undefined) throw new InexactSqrt(); // negative radicand (complex)
       return v;
     }
   }
@@ -99,10 +112,16 @@ export function rationalToExpr(r: Rational): Expr {
  */
 export function truthValue(eqn: Equation, env: Env): boolean | undefined {
   try {
-    const cmp = evalExpr(eqn.lhs, env).compare(evalExpr(eqn.rhs, env));
+    // Work with the difference: equality is decidable over surds (structural,
+    // by ℚ-linear independence), and order is decidable whenever the difference
+    // is rational (e.g. √2+1 vs √2). An irrational difference (√2 vs 1) needs
+    // exact surd ORDERING — deferred — so it reads as undefined and is skipped.
+    const diff = evalExpr(eqn.lhs, env).sub(evalExpr(eqn.rhs, env));
+    if (eqn.relation === "=") return diff.isZero();
+    const d = diff.asRational();
+    if (d === undefined) return undefined;
+    const cmp = d.compare(Rational.zero); // sign of (lhs − rhs)
     switch (eqn.relation) {
-      case "=":
-        return cmp === 0;
       case "<":
         return cmp < 0;
       case "≤":

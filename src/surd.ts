@@ -113,6 +113,25 @@ export class Surd {
     return Surd.build(m);
   }
 
+  /** Integer power. Negative exponents need `inverse()`, so they return
+   *  undefined for zero (0⁻ⁿ) or ≥2-radical bases. `x⁰ = 1` (incl. `0⁰`,
+   *  matching the exact evaluator). */
+  powInt(e: bigint): Surd | undefined {
+    if (e < 0n) {
+      const inv = this.inverse();
+      return inv === undefined ? undefined : inv.powInt(-e);
+    }
+    let result = Surd.one;
+    let base: Surd = this;
+    let n = e;
+    while (n > 0n) {
+      if ((n & 1n) === 1n) result = result.mul(base);
+      n >>= 1n;
+      if (n > 0n) base = base.mul(base);
+    }
+    return result;
+  }
+
   /** Multiplicative inverse, or undefined when zero or when ≥2 radicals appear. */
   inverse(): Surd | undefined {
     if (this.isZero()) return undefined;

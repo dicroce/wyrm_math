@@ -76,6 +76,9 @@ export type {
 // ---------------------------------------------------------------------------
 // All correctness checks are exact: bigint rationals, no floating point.
 export { Rational, DivisionByZero, gcd } from "./rational.js";
+// Surds extend exact arithmetic past ℚ to quadratic irrationals (q₀ + Σqᵢ√nᵢ);
+// evalExpr returns this domain, with Rational as the degenerate element.
+export { Surd } from "./surd.js";
 
 // ---------------------------------------------------------------------------
 // 3. Evaluation
