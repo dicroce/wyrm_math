@@ -150,6 +150,13 @@ already exists.
 
 ### Deferred — available next steps (tracked in todo.md)
 
+- **NEXT: "no real solution" detection** (app side). The engine correctly
+  leaves a negative discriminant as `√(negative)` (an undefined point), but the
+  app's `isSolved` is structural, so `x = √(−1)` reads as "isolated → solved"
+  and the app cheerfully celebrates an imaginary value. Fix: when a solved form
+  contains a negative radical (or its value side fails to evaluate to a real —
+  `evalExpr` throws InexactSqrt), report **"no real solution"** instead of a
+  win. Unblocks adding `x² + 1 = 0` to the examples honestly; on-ramp to ℂ.
 - **Radical arithmetic rules** beyond `simplify-sqrt`: `√a·√b → √(ab)`, combine
   like radicals `q√n + r√n → (q+r)√n`, rationalize a surd denominator. Not on
   the quadratic-formula path, so split out of Phase 3 into a focused pass.
