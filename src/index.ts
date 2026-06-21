@@ -218,6 +218,11 @@ export {
 } from "./moves.js";
 export type { Move, AnyRule, AnyBranchingRule } from "./moves.js";
 
+// describeMove turns a Move into a plain-language step ("Subtract 3 from both
+// sides"); describeExpr is its caption-friendly expression printer (3x, x², √2)
+// — distinct from exprToString, which round-trips through the parser.
+export { describeMove, describeExpr } from "./describe.js";
+
 // ---------------------------------------------------------------------------
 // 9. Layout geometry — DOM-free rendering support
 // ---------------------------------------------------------------------------
