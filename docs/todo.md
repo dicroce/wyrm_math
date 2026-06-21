@@ -70,7 +70,10 @@ square. All three trace to one wall — see the number tower below.
   result from one into another) plus move-restrictions so terms don't wander
   across. Build it once, generally — don't bolt a one-off side-equation onto a
   specific rule. (Branching already gives *disjunctive* sibling equations; this
-  is the *conjunctive* / auxiliary case.)
+  is the *conjunctive* / auxiliary case.) **Design drafted** — see
+  `docs/multi-equation.md` (engine: the `System` wrapper, cross-equation rules,
+  soundness) and `wyrm/tech_docs/multi-equation-ui.md` (the worksheet canvas +
+  quadratic-formula tool).
 - [ ] **Compound inequalities** — an interval / conjunction representation
   (today a judgment carries a single relation).
 
