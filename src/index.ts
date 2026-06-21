@@ -232,6 +232,9 @@ export type { System, SystemMove } from "./system.js";
 // Substitution: the first cross-equation rule. solvedVariable detects `v = expr`
 // form; substitute/substituteInSystem replace v in another equation.
 export { substitute, substituteInSystem, solvedVariable } from "./substitution.js";
+// Elimination: replace one equation with a linear combination α·A + β·B (both
+// equalities, β ≠ 0) to cancel a variable.
+export { eliminate, eliminateInSystem } from "./elimination.js";
 
 // ---------------------------------------------------------------------------
 // 9. Layout geometry — DOM-free rendering support
