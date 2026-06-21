@@ -229,6 +229,9 @@ export { describeMove, describeExpr } from "./describe.js";
 // docs/multi-equation.md.
 export { mkSystem, applyRuleInSystem, systemTruth, enumerateSystemMoves } from "./system.js";
 export type { System, SystemMove } from "./system.js";
+// Substitution: the first cross-equation rule. solvedVariable detects `v = expr`
+// form; substitute/substituteInSystem replace v in another equation.
+export { substitute, substituteInSystem, solvedVariable } from "./substitution.js";
 
 // ---------------------------------------------------------------------------
 // 9. Layout geometry — DOM-free rendering support
