@@ -11,8 +11,10 @@
 import {
   findById,
   int,
+  neg,
   rebuildNary,
   replaceTermRespectingInvariants,
+  sum,
   type Equation,
   type Expr,
   type NodeId,
@@ -246,6 +248,35 @@ export const cancelNegatives: Rule<Record<string, never>> = {
     });
     const rebuilt = rebuildNary(node, children);
     const tree2 = replaceTermRespectingInvariants(tree, node.id, rebuilt);
+    return {
+      equation: tree2,
+      emits: [],
+      diff: { ...idSetDiff(tree, tree2), merged: [], moved: [] },
+    };
+  },
+};
+
+/** −(a + b) ~> −a + (−b): distribute a negation across a sum. Exact and
+ *  unconditional. Needed by elimination's subtract step, where α·A + (−1)·B
+ *  produces −(B's sum) — e.g. (x + y) − (x − y) has the −(x − y) term. */
+export const distributeNegation: Rule<Record<string, never>> = {
+  id: "distribute-negation",
+  description: "Distribute a negative across a sum: −(a + b) = −a − b.",
+
+  precondition(judgment, location, _params) {
+    const node = findById(judgment.equation, location);
+    return node !== undefined && node.kind === "neg" && node.child.kind === "sum";
+  },
+
+  apply(judgment, location, _params): RuleApplication {
+    const tree = judgment.equation;
+    const node = findById(tree, location);
+    if (node === undefined || node.kind !== "neg" || node.child.kind !== "sum") {
+      throw new RulePreconditionViolation(this.id, "not a negation of a sum");
+    }
+    // neg() collapses double negation, so −(x − y) becomes −x + y cleanly.
+    const distributed = sum(node.child.children.map((c) => neg(c)));
+    const tree2 = replaceTermRespectingInvariants(tree, node.id, distributed);
     return {
       equation: tree2,
       emits: [],

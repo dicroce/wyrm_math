@@ -187,6 +187,7 @@ export {
   dropOneFactor,
   multiplyByZero,
   cancelNegatives,
+  distributeNegation,
   powerOne,
   powerZero,
 } from "./rules/identities.js";

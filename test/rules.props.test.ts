@@ -11,6 +11,7 @@ import {
   combineIntegerFactors,
   combineLikeFactors,
   distribute,
+  distributeNegation,
   dropOneFactor,
   dropZeroTerm,
   eq,
@@ -309,6 +310,28 @@ describe("cancel-negatives", () => {
     const eqn = embed(prod, "top", int(0), true);
     const { equation: after } = cancelNegatives.apply(mkJudgment(eqn), prod.id, {});
     expect(exprToString(after.lhs)).toBe("(2 * y)");
+  });
+});
+
+describe("distribute-negation", () => {
+  it("property: −(a + b) preserves the solution set", () => {
+    fc.assert(
+      fc.property(arbExpr, arbExpr, arbEnvs, (a, b, envs) => {
+        const ns = neg(sum([a, b]));
+        if (ns.kind !== "neg" || ns.child.kind !== "sum") return;
+        const eqn = embed(ns, "top", int(0), true);
+        const { equation: after } = distributeNegation.apply(mkJudgment(eqn), ns.id, {});
+        assertSolutionSetPreserved(eqn, after, envs);
+      }),
+    );
+  });
+
+  it("turns −(x − y) into −x + y", () => {
+    const ns = neg(sum([variable("x"), neg(variable("y"))]));
+    if (ns.kind !== "neg") throw new Error("unreachable");
+    const eqn = embed(ns, "top", int(0), true);
+    const { equation: after } = distributeNegation.apply(mkJudgment(eqn), ns.id, {});
+    expect(exprToString(after.lhs)).toBe("(-x + y)");
   });
 });
 

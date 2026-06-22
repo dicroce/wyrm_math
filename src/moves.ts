@@ -32,6 +32,7 @@ import { factorInstancesOf, factorOut } from "./rules/factorOut.js";
 import { factorOutNegative } from "./rules/factorOutNegative.js";
 import {
   cancelNegatives,
+  distributeNegation,
   dropOneFactor,
   dropZeroTerm,
   multiplyByZero,
@@ -63,6 +64,7 @@ export const allRules: readonly AnyRule[] = [
   additiveCancellation,
   addToBothSides,
   cancelNegatives,
+  distributeNegation,
   combineFractions,
   combineIntegerFactors,
   combineIntegers,
@@ -283,6 +285,10 @@ export function enumerateMoves(judgment: Judgment): Move[] {
     // Tap a perfect-square radical to evaluate it.
     if (node.kind === "sqrt") {
       push(simplifySqrt, node.id, {}, node.id);
+    }
+    // Tap a negation of a sum to distribute it: −(a + b) → −a − b.
+    if (node.kind === "neg" && node.child.kind === "sum") {
+      push(distributeNegation, node.id, {}, node.id);
     }
     // Pair moves across a fraction bar, in both drag directions.
     if (node.kind === "fraction") {
