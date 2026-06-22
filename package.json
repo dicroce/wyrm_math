@@ -1,6 +1,6 @@
 {
   "name": "wyrm-math",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Exact, conditionally-sound symbolic algebra engine for manipulative interfaces: immutable expression trees, rewrite rules with first-class assumptions, derivation trees, move enumeration, and DOM-free layout geometry.",
   "license": "MIT",
   "author": "Tony Di Croce",

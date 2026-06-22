@@ -3,6 +3,7 @@ import {
   findById,
   findParent,
   int,
+  product,
   rebuildNary,
   replaceTermRespectingInvariants,
   type Equation,
@@ -18,6 +19,7 @@ import {
   type Rule,
   type RuleApplication,
 } from "../rule.js";
+import { literalValue } from "./combineIntegers.js";
 
 export interface AdditiveCancellationParams {
   /** Direct children of the Sum at `location`. */
@@ -26,13 +28,39 @@ export interface AdditiveCancellationParams {
 }
 
 /**
- * a and -a are structural negations of each other. Because double negation
- * never survives the smart constructors, it suffices to unwrap one Neg.
+ * Integer coefficient and the remaining (non-literal) body of a term:
+ *   2x → (2, x);  (−2)x → (−2, x);  −2x → (−2, x);  x → (1, x);  5 → (5, 1).
+ */
+function splitCoeff(t: Expr): { coeff: bigint; body: Expr } {
+  if (t.kind === "neg") {
+    const s = splitCoeff(t.child);
+    return { coeff: -s.coeff, body: s.body };
+  }
+  const lit = literalValue(t);
+  if (lit !== undefined) return { coeff: lit, body: int(1) };
+  if (t.kind === "product") {
+    let coeff = 1n;
+    const rest: Expr[] = [];
+    for (const f of t.children) {
+      const v = literalValue(f);
+      if (v !== undefined) coeff *= v;
+      else rest.push(f);
+    }
+    return { coeff, body: rest.length === 1 ? rest[0]! : product(rest) };
+  }
+  return { coeff: 1n, body: t };
+}
+
+/**
+ * a and b annihilate when they are like terms with OPPOSITE coefficients —
+ * c·body and (−c)·body — so a + b = 0. This subsumes the structural a / −a case
+ * and also catches 2x + (−2)x, where (−2)x is a product with a negative
+ * coefficient (not a Neg node, so it wouldn't match structurally).
  */
 function annihilates(a: Expr, b: Expr): boolean {
-  if (a.kind === "neg") return eq(a.child, b);
-  if (b.kind === "neg") return eq(a, b.child);
-  return false;
+  const sa = splitCoeff(a);
+  const sb = splitCoeff(b);
+  return sa.coeff === -sb.coeff && eq(sa.body, sb.body);
 }
 
 function resolve(

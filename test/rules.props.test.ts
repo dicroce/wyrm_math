@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   additiveCancellation,
   addToBothSides,
+  cancelNegatives,
   allNodes,
   childrenOf,
   cloneFresh,
@@ -14,6 +15,7 @@ import {
   dropZeroTerm,
   eq,
   equation,
+  exprToString,
   expandPower,
   factorOut,
   factorOutNegative,
@@ -26,6 +28,7 @@ import {
   invariantViolations,
   mkJudgment,
   moveTermAcross,
+  multiplyByZero,
   neg,
   negativeExponent,
   pow,
@@ -244,6 +247,68 @@ describe("additive-cancellation", () => {
     expect(() =>
       additiveCancellation.apply(mkJudgment(eqn), s.id, { termA: a!.id, termB: b!.id }),
     ).toThrow();
+  });
+
+  it("cancels like terms with opposite coefficients (2x and (−2)x)", () => {
+    const a = product([int(2), variable("x")]);
+    const b = product([int(-2), variable("x")]); // (−2)x — a product, not a Neg node
+    const s = sum([a, b, product([int(3), variable("y")])]);
+    if (s.kind !== "sum") throw new Error("unreachable");
+    const eqn = embed(s, "top", int(0), true);
+    expect(
+      additiveCancellation.precondition(mkJudgment(eqn), s.id, { termA: a.id, termB: b.id }),
+    ).toBe(true);
+    const { equation: after } = additiveCancellation.apply(mkJudgment(eqn), s.id, {
+      termA: a.id,
+      termB: b.id,
+    });
+    expect(findById(after, a.id)).toBeUndefined();
+    expect(findById(after, b.id)).toBeUndefined();
+  });
+});
+
+describe("multiply-by-zero", () => {
+  it("property: 0·x preserves the solution set", () => {
+    fc.assert(
+      fc.property(arbExpr, arbEnvs, (factor, envs) => {
+        const prod = product([int(0), factor]);
+        if (prod.kind !== "product") return; // a product is what the rule targets
+        const eqn = embed(prod, "top", int(1), true); // (0·factor) = 1
+        const { equation: after } = multiplyByZero.apply(mkJudgment(eqn), prod.id, {});
+        assertSolutionSetPreserved(eqn, after, envs);
+      }),
+    );
+  });
+
+  it("collapses a zero-factor product to 0", () => {
+    const prod = product([int(0), variable("x")]);
+    const eqn = embed(prod, "top", int(0), true);
+    const { equation: after } = multiplyByZero.apply(mkJudgment(eqn), prod.id, {});
+    expect(after.lhs.kind).toBe("int");
+    expect(after.lhs.kind === "int" && after.lhs.value).toBe(0n);
+  });
+});
+
+describe("cancel-negatives", () => {
+  it("property: (−a)(−b) preserves the solution set", () => {
+    fc.assert(
+      fc.property(arbExpr, arbExpr, arbEnvs, (a, b, envs) => {
+        const prod = product([neg(a), neg(b)]);
+        if (prod.kind !== "product" || prod.children.filter((c) => c.kind === "neg").length < 2) {
+          return; // a or b was itself a Neg (collapsed) — not the case under test
+        }
+        const eqn = embed(prod, "top", int(1), true); // ((−a)(−b)) = 1
+        const { equation: after } = cancelNegatives.apply(mkJudgment(eqn), prod.id, {});
+        assertSolutionSetPreserved(eqn, after, envs);
+      }),
+    );
+  });
+
+  it("turns (−2)(−y) into 2·y", () => {
+    const prod = product([int(-2), neg(variable("y"))]);
+    const eqn = embed(prod, "top", int(0), true);
+    const { equation: after } = cancelNegatives.apply(mkJudgment(eqn), prod.id, {});
+    expect(exprToString(after.lhs)).toBe("(2 * y)");
   });
 });
 

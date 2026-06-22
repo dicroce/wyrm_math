@@ -182,7 +182,14 @@ export { factorOut } from "./rules/factorOut.js";
 export type { FactorOutParams } from "./rules/factorOut.js";
 export { factorOutNegative } from "./rules/factorOutNegative.js";
 export type { FactorOutNegativeParams } from "./rules/factorOutNegative.js";
-export { dropZeroTerm, dropOneFactor, powerOne, powerZero } from "./rules/identities.js";
+export {
+  dropZeroTerm,
+  dropOneFactor,
+  multiplyByZero,
+  cancelNegatives,
+  powerOne,
+  powerZero,
+} from "./rules/identities.js";
 export type { DropTermParams } from "./rules/identities.js";
 export { moveTermAcross } from "./rules/moveTermAcross.js";
 export type { MoveTermAcrossParams } from "./rules/moveTermAcross.js";

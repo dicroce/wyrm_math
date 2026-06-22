@@ -194,6 +194,10 @@ export function describeMove(judgment: Judgment, move: Move): string | undefined
       return "x¹ = x";
     case "power-zero":
       return "x⁰ = 1";
+    case "multiply-by-zero":
+      return "0 times anything is 0";
+    case "cancel-negatives":
+      return "Two negatives make a positive";
     case "drop-zero-term":
       return "Drop the zero";
     case "drop-one-factor":

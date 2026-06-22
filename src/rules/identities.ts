@@ -169,3 +169,87 @@ export const powerZero: Rule<Record<string, never>> = {
     };
   },
 };
+
+/** 0 · x ~> 0: a product with a literal-zero factor is zero. (Unconditionally
+ *  exact — 0·anything is 0 — like the other identity cleanups.) Pairs with
+ *  drop-zero-term to clear a vanished term, e.g. after 2x + (−2)x folds to 0x. */
+export const multiplyByZero: Rule<Record<string, never>> = {
+  id: "multiply-by-zero",
+  description: "A product with a zero factor is zero.",
+
+  precondition(judgment, location, _params) {
+    const node = findById(judgment.equation, location);
+    return (
+      node !== undefined &&
+      node.kind === "product" &&
+      node.children.some((c) => literalValue(c) === 0n)
+    );
+  },
+
+  apply(judgment, location, _params): RuleApplication {
+    const tree = judgment.equation;
+    const node = findById(tree, location);
+    if (
+      node === undefined ||
+      node.kind !== "product" ||
+      !node.children.some((c) => literalValue(c) === 0n)
+    ) {
+      throw new RulePreconditionViolation(this.id, "not a product with a zero factor");
+    }
+    const zero = int(0);
+    const tree2 = replaceTermRespectingInvariants(tree, node.id, zero);
+    return {
+      equation: tree2,
+      emits: [],
+      diff: {
+        ...idSetDiff(tree, tree2),
+        merged: [{ sources: node.children.map((c) => c.id), target: zero.id }],
+        moved: [],
+      },
+    };
+  },
+};
+
+/** (−a)·(−b) ~> a·b: two negative factors in a product cancel. Exact and
+ *  unconditional. Common after distributing a negative over a difference, e.g.
+ *  (−2)(x − y) → (−2)x + (−2)(−y), where the second term is (−2)(−y) → 2y. */
+export const cancelNegatives: Rule<Record<string, never>> = {
+  id: "cancel-negatives",
+  description: "Two negative factors in a product make a positive.",
+
+  precondition(judgment, location, _params) {
+    const node = findById(judgment.equation, location);
+    return (
+      node !== undefined &&
+      node.kind === "product" &&
+      node.children.filter((c) => c.kind === "neg").length >= 2
+    );
+  },
+
+  apply(judgment, location, _params): RuleApplication {
+    const tree = judgment.equation;
+    const node = findById(tree, location);
+    if (
+      node === undefined ||
+      node.kind !== "product" ||
+      node.children.filter((c) => c.kind === "neg").length < 2
+    ) {
+      throw new RulePreconditionViolation(this.id, "needs two negative factors");
+    }
+    let flipped = 0;
+    const children = node.children.map((c) => {
+      if (c.kind === "neg" && flipped < 2) {
+        flipped++;
+        return c.child; // un-negate; two sign flips cancel
+      }
+      return c;
+    });
+    const rebuilt = rebuildNary(node, children);
+    const tree2 = replaceTermRespectingInvariants(tree, node.id, rebuilt);
+    return {
+      equation: tree2,
+      emits: [],
+      diff: { ...idSetDiff(tree, tree2), merged: [], moved: [] },
+    };
+  },
+};

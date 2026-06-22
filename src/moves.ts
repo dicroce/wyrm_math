@@ -30,7 +30,14 @@ import { divideBothSides } from "./rules/divideBothSides.js";
 import { expandPower } from "./rules/expandPower.js";
 import { factorInstancesOf, factorOut } from "./rules/factorOut.js";
 import { factorOutNegative } from "./rules/factorOutNegative.js";
-import { dropOneFactor, dropZeroTerm, powerOne, powerZero } from "./rules/identities.js";
+import {
+  cancelNegatives,
+  dropOneFactor,
+  dropZeroTerm,
+  multiplyByZero,
+  powerOne,
+  powerZero,
+} from "./rules/identities.js";
 import { moveTermAcross } from "./rules/moveTermAcross.js";
 import { distributePower, negativeExponent, powerOfPower } from "./rules/powers.js";
 import {
@@ -55,6 +62,7 @@ export type AnyRule = Rule<any>;
 export const allRules: readonly AnyRule[] = [
   additiveCancellation,
   addToBothSides,
+  cancelNegatives,
   combineFractions,
   combineIntegerFactors,
   combineIntegers,
@@ -68,6 +76,7 @@ export const allRules: readonly AnyRule[] = [
   factorOut,
   factorOutNegative,
   moveTermAcross,
+  multiplyByZero,
   multiplicativeCancellation,
   multiplyBothSides,
   negativeExponent,
@@ -258,6 +267,8 @@ export function enumerateMoves(judgment: Judgment): Move[] {
         }
         push(dropOneFactor, node.id, { termId: a.id }, a.id); // tap
       }
+      push(multiplyByZero, node.id, {}, node.id); // tap: 0·x ~> 0 (precond gates)
+      push(cancelNegatives, node.id, {}, node.id); // tap: (−a)(−b) ~> a·b (precond gates)
     }
     // Tap moves on powers: expand, unwrap x^1, collapse x^0, flip a
     // negative exponent, fold nested powers, distribute over a product.
