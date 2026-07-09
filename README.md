@@ -16,6 +16,11 @@ become first-class, visible **Assumptions** that travel with the equation.
 Pure TypeScript, zero dependencies, zero DOM — runs in Node, browsers,
 workers, native webviews, anywhere.
 
+wyrm-math is the engine behind **Wyrm Math**, a gesture-based algebra app for
+iOS and Android — **[try the in-browser demo or get the
+app](https://dicroce.github.io/wyrm/home.html)**. The engine is MIT; the app is
+how the project sustains itself.
+
 ```ts
 import {
   parseEquation, Derivation,
