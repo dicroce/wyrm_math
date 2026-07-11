@@ -136,6 +136,8 @@ export function describeMove(judgment: Judgment, move: Move): string | undefined
     // — disjunctive / branching —
     case "sqrt-both-sides":
       return "Take the square root of both sides (±)";
+    case "nth-root-both-sides":
+      return "Take the nth root of both sides";
     case "zero-product":
       return "Set each factor equal to zero";
     case "quadratic-formula":

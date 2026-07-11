@@ -50,6 +50,36 @@ export function sqrtRational(v: Rational): Rational | undefined {
   return new Rational(sn, sd);
 }
 
+/** Exact integer nth root of a non-negative a (n >= 1): the r with rⁿ = a, or
+ *  undefined when a is not a perfect nth power. Binary search on bigints. */
+function exactIntegerRoot(a: bigint, n: bigint): bigint | undefined {
+  if (a < 0n) return undefined;
+  if (a === 0n) return 0n;
+  let lo = 1n;
+  let hi = a;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1n;
+    const p = mid ** n;
+    if (p === a) return mid;
+    if (p < a) lo = mid + 1n;
+    else hi = mid - 1n;
+  }
+  return undefined;
+}
+
+/** Exact rational nth root (n >= 2), or undefined when it is irrational — or,
+ *  for even n, when the radicand is negative (no real root). The sign is
+ *  carried through for odd n (∛(−8) = −2). Since v is normalized (gcd 1), it
+ *  is a perfect nth power iff |num| and den each are. */
+export function nthRootRational(v: Rational, n: bigint): Rational | undefined {
+  const negative = v.num < 0n;
+  if (negative && n % 2n === 0n) return undefined;
+  const rn = exactIntegerRoot(negative ? -v.num : v.num, n);
+  const rd = exactIntegerRoot(v.den, n);
+  if (rn === undefined || rd === undefined) return undefined;
+  return new Rational(negative ? -rn : rn, rd);
+}
+
 /**
  * Exact evaluation under a variable assignment, over the surd-closed exact
  * domain (`Surd`; a Rational is the degenerate element). Throws DivisionByZero
@@ -96,6 +126,19 @@ export function evalExpr(e: Expr, env: Env): Surd {
       if (v === undefined) throw new InexactSqrt(); // negative radicand (complex)
       return v;
     }
+  }
+}
+
+const EMPTY_ENV: Env = new Map();
+
+/** The exact rational value of a constant expression, or undefined when it
+ *  holds a variable or hits an undefined/irrational point (a probe with no
+ *  variable bindings — never throws). */
+export function constantRational(e: Expr): Rational | undefined {
+  try {
+    return evalExpr(e, EMPTY_ENV).asRational();
+  } catch {
+    return undefined;
   }
 }
 

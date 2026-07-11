@@ -49,6 +49,7 @@ import {
   zeroProduct,
 } from "./rules/quadratics.js";
 import { coeffAndBody, splitTerm } from "./rules/splitTerm.js";
+import { nthRootBothSides } from "./rules/roots.js";
 import { quotientOfPowers } from "./rules/quotientOfPowers.js";
 import { squareBothSides } from "./rules/squareBothSides.js";
 import { swapSides } from "./rules/swapSides.js";
@@ -107,6 +108,7 @@ export type AnyBranchingRule = BranchingRule<any>;
 /** Disjunctive rules: dispatched through Derivation.applyBranching. */
 export const allBranchingRules: readonly AnyBranchingRule[] = [
   sqrtBothSides,
+  nthRootBothSides,
   zeroProduct,
   quadraticFormula,
 ];
@@ -329,6 +331,8 @@ export function enumerateMoves(judgment: Judgment): Move[] {
   // square itself) and the zero-product property (handle is the product).
   if (eqn.lhs.kind === "pow") {
     pushBranching(sqrtBothSides, eqn.id, {}, eqn.lhs.id);
+    // Degree >= 3 with an exact rational root (x³ = 8 → x = 2; x⁴ = 16 → x = ±2).
+    pushBranching(nthRootBothSides, eqn.id, {}, eqn.lhs.id);
   }
   for (const side of [eqn.lhs, eqn.rhs]) {
     if (side.kind === "product") {

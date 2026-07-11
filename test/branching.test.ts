@@ -18,9 +18,12 @@ import {
   invariantViolations,
   mkJudgment,
   movesFrom,
+  neg,
+  nthRootBothSides,
   pow,
   product,
   quadraticFormula,
+  rationalToExpr,
   Rational,
   ruleById,
   simplifySqrt,
@@ -85,6 +88,73 @@ describe("sqrt-both-sides", () => {
     expect(sqrtBothSides.precondition(mkJudgment(e2), e2.id, {})).toBe(false);
     const e3 = equation(pow(variable("x"), int(3)), int(8));
     expect(sqrtBothSides.precondition(mkJudgment(e3), e3.id, {})).toBe(false);
+  });
+});
+
+describe("nth-root-both-sides", () => {
+  const arbRoot = fc
+    .tuple(fc.bigInt({ min: -4n, max: 4n }), fc.bigInt({ min: 1n, max: 4n }))
+    .map(([num, den]) => new Rational(num, den));
+  const arbDegree = fc.bigInt({ min: 3n, max: 6n });
+
+  it("property: the branches union to exactly the original solutions", () => {
+    fc.assert(
+      fc.property(arbExpr, arbRoot, arbDegree, arbEnvs, (base, r, n, envs) => {
+        // rhs = rⁿ, a constant with an exact nth root, so the rule fires.
+        const eqn = equation(pow(base, int(n)), rationalToExpr(r.powInt(n)));
+        const j = mkJudgment(eqn);
+        expect(nthRootBothSides.precondition(j, eqn.id, {})).toBe(true);
+        const branches = applyBranchingRule(j, nthRootBothSides, eqn.id, {});
+        expect(branches.length).toBeGreaterThanOrEqual(1);
+        expect(branches.length).toBeLessThanOrEqual(2);
+        for (const b of branches) {
+          expect(invariantViolations(b.judgment.equation)).toEqual([]);
+        }
+        assertUnionProperty(eqn, branches, envs);
+      }),
+    );
+  });
+
+  it("solves x³ = 8 to x = 2 (single real root)", () => {
+    const eqn = equation(pow(variable("x"), int(3)), int(8));
+    const branches = applyBranchingRule(mkJudgment(eqn), nthRootBothSides, eqn.id, {});
+    expect(branches).toHaveLength(1);
+    const only = branches[0]!.judgment.equation;
+    expect(eq(only.lhs, variable("x"))).toBe(true);
+    expect(evalExpr(only.rhs, new Map()).asRational()?.equals(new Rational(2n))).toBe(true);
+  });
+
+  it("solves x⁴ = 16 to x = 2 and x = −2", () => {
+    const eqn = equation(pow(variable("x"), int(4)), int(16));
+    const branches = applyBranchingRule(mkJudgment(eqn), nthRootBothSides, eqn.id, {});
+    expect(branches).toHaveLength(2);
+    const values = branches.map((b) =>
+      evalExpr(b.judgment.equation.rhs, new Map()).asRational(),
+    );
+    expect(values[0]?.equals(new Rational(2n))).toBe(true);
+    expect(values[1]?.equals(new Rational(-2n))).toBe(true);
+    for (const b of branches) {
+      expect(eq(b.judgment.equation.lhs, variable("x"))).toBe(true);
+    }
+  });
+
+  it("solves x³ = −8 to x = −2 (odd root of a negative)", () => {
+    const eqn = equation(pow(variable("x"), int(3)), neg(int(8)));
+    const branches = applyBranchingRule(mkJudgment(eqn), nthRootBothSides, eqn.id, {});
+    expect(branches).toHaveLength(1);
+    expect(evalExpr(branches[0]!.judgment.equation.rhs, new Map()).asRational()?.equals(new Rational(-2n))).toBe(true);
+  });
+
+  it("does not fire on squares or non-perfect powers", () => {
+    const square = equation(pow(variable("x"), int(2)), int(9));
+    expect(nthRootBothSides.precondition(mkJudgment(square), square.id, {})).toBe(false);
+    const imperfect = equation(pow(variable("x"), int(3)), int(7));
+    expect(nthRootBothSides.precondition(mkJudgment(imperfect), imperfect.id, {})).toBe(false);
+    // x⁴ = −16 has no real root — not offered.
+    const negEven = equation(pow(variable("x"), int(4)), neg(int(16)));
+    expect(nthRootBothSides.precondition(mkJudgment(negEven), negEven.id, {})).toBe(false);
+    const inequality = equation(pow(variable("x"), int(3)), int(8), "<");
+    expect(nthRootBothSides.precondition(mkJudgment(inequality), inequality.id, {})).toBe(false);
   });
 });
 
