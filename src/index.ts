@@ -154,6 +154,20 @@ export { Derivation } from "./derivation.js";
 export type { DerivationNode } from "./derivation.js";
 
 // ---------------------------------------------------------------------------
+// 6b. Problem generation
+// ---------------------------------------------------------------------------
+// Random practice problems, built backward from a chosen answer so they are
+// solvable and clean by construction; every problem returns its solution(s).
+export { generateProblem, PROBLEM_TOPICS, DIFFICULTIES } from "./generate.js";
+export type {
+  ProblemTopic,
+  ProblemSpec,
+  GeneratedProblem,
+  Difficulty,
+  Rng,
+} from "./generate.js";
+
+// ---------------------------------------------------------------------------
 // 7. Built-in rules
 // ---------------------------------------------------------------------------
 // Each rule ships with a property test asserting it respects the solution
