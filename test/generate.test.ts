@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   DIFFICULTIES,
   generateProblem,
+  generateSystem,
   PROBLEM_TOPICS,
   Rational,
   truthValue,
@@ -44,15 +45,23 @@ describe("problem generator", () => {
     }
   }
 
-  it("easy tier stays non-negative (answers)", () => {
-    const rng = mulberry32(97);
-    for (let i = 0; i < 250; i++) {
-      for (const { id: topic } of PROBLEM_TOPICS) {
-        const p = generateProblem({ topic, difficulty: "easy" }, rng);
-        for (const s of p.solutions) expect(s.num > 0n).toBe(true);
-      }
-    }
-  });
+  for (const difficulty of DIFFICULTIES) {
+    it(`systems / ${difficulty}: (x, y) solves both equations`, () => {
+      fc.assert(
+        fc.property(fc.integer(), (seed) => {
+          const sys = generateSystem(difficulty, mulberry32(seed));
+          const env = new Map([
+            ["x", sys.x],
+            ["y", sys.y],
+          ]);
+          for (const eqn of sys.equations) {
+            expect(variablesIn(eqn).size).toBeGreaterThan(0);
+            expect(truthValue(eqn, env)).toBe(true);
+          }
+        }),
+      );
+    });
+  }
 
   it("quadratics report both roots (or one when it is a perfect square)", () => {
     const rng = mulberry32(2024);

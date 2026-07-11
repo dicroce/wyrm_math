@@ -158,11 +158,12 @@ export type { DerivationNode } from "./derivation.js";
 // ---------------------------------------------------------------------------
 // Random practice problems, built backward from a chosen answer so they are
 // solvable and clean by construction; every problem returns its solution(s).
-export { generateProblem, PROBLEM_TOPICS, DIFFICULTIES } from "./generate.js";
+export { generateProblem, generateSystem, PROBLEM_TOPICS, DIFFICULTIES } from "./generate.js";
 export type {
   ProblemTopic,
   ProblemSpec,
   GeneratedProblem,
+  SystemProblem,
   Difficulty,
   Rng,
 } from "./generate.js";
