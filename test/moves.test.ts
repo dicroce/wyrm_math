@@ -96,6 +96,38 @@ describe("enumerateMoves", () => {
     expect(handles(moves)).toEqual([x1.id, x2.id].sort());
   });
 
+  it("reduces integer fractions with a ±1 or negative denominator (not just gcd > 1)", () => {
+    // The gcd(|num|, |den|) > 1 gate used to strand these — a ±1 denominator has
+    // no common factor to cancel but still collapses the bar, and a negative
+    // denominator needs its sign canonicalized into the numerator. Regression
+    // for the divide-by-(−1) dead end surfaced via the linear-systems solver.
+    const cases: ReadonlyArray<readonly [Expr, Expr, Expr]> = [
+      [neg(int(6)), neg(int(1)), int(6)], //  −6/−1 → 6   (unit denom + sign)
+      [int(6), int(1), int(6)], //             6/1  → 6   (unit denom)
+      [neg(int(6)), int(1), neg(int(6))], //  −6/1  → −6
+      [int(6), neg(int(3)), neg(int(2))], //   6/−3 → −2  (negative denom, g = 3)
+    ];
+    for (const [numLit, denLit, want] of cases) {
+      const f = fraction([numLit], [denLit]);
+      const d = new Derivation(equation(f, variable("x")));
+      const m = movesFrom(d.current, f.num[0]!.id).find(
+        (mv) => mv.ruleId === "reduce-integer-fraction",
+      );
+      expect(m, `reduce should be offered for ${exprToString(f)}`).toBeDefined();
+      d.apply(ruleById(m!.ruleId), m!.location, m!.params);
+      expect(
+        eq(d.current.equation, equation(want, variable("x"))),
+        `${exprToString(f)} → ${exprToString(d.current.equation.lhs)} (want ${exprToString(want)})`,
+      ).toBe(true);
+    }
+  });
+
+  it("does NOT offer reduce on a positive coprime fraction (5/3 stays put)", () => {
+    const f = fraction([int(5)], [int(3)]);
+    const d = new Derivation(equation(f, variable("x")));
+    expect(byRule(enumerateMoves(d.current), "reduce-integer-fraction")).toEqual([]);
+  });
+
   it("offers clearing a denominator via multiply-both-sides, dropping across OR up", () => {
     const num = variable("x");
     const den = int(2);

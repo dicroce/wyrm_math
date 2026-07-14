@@ -39,7 +39,12 @@ function resolve(
   const vb = literalValue(denTerm);
   if (va === undefined || vb === undefined || vb === 0n) return undefined;
   const g = gcd(va < 0n ? -va : va, vb < 0n ? -vb : vb);
-  if (g <= 1n) return undefined;
+  // Reduce is a genuine no-op ONLY when there's no common factor AND the
+  // denominator is already a positive non-unit (5/3 stays put). Otherwise there
+  // is still work to do even at g = 1: a ±1 denominator collapses the bar
+  // (6/1 → 6, −6/−1 → 6) and a negative denominator has its sign canonicalized
+  // into the numerator (6/−3 → −2). Gating on g > 1 alone stranded all of those.
+  if (g <= 1n && vb > 1n) return undefined;
   return { frac: node, va, vb, g };
 }
 
