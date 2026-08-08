@@ -21,7 +21,7 @@ to the original equation GIVEN its assumption set.
 - **Immutability.** Every operation returns a new tree; old trees live on in
   the derivation log. Never mutate a node.
 - **Build nodes only through the smart constructors** (`int`, `sum`,
-  `product`, `neg`, `fraction`, `pow`, `sqrt`, `equation`) and rebuild only
+  `product`, `neg`, `fraction`, `pow`, `sqrt`, `root`, `equation`) and rebuild only
   through `rebuildNary` / `replaceNode` / `replaceTermRespectingInvariants`.
   They maintain the structural invariants (flattening, canonical negatives,
   fraction-list product spreading, no double negation, unique ids).
