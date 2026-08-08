@@ -397,6 +397,54 @@ function lay(node: Node, scale: number): RBox {
         children: [{ box: child, dx: radW, dy: 0 }],
       };
     }
+    case "root": {
+      // Same radical geometry as sqrt, plus a small index tucked into the crook
+      // (upper-left), which shifts the radical + bar + radicand right by its width.
+      const child = lay(node.radicand, scale);
+      const th = M.BAR_TH * scale;
+      const gap = M.RAD_GAP * scale;
+      const coverAscent = child.ascent + gap + th;
+      const radScale = Math.max(scale, (coverAscent + child.descent) / (M.ASCENT + M.DESCENT));
+      const radW = M.RADICAL_W * radScale;
+      const contentCenter = (child.descent - coverAscent) / 2;
+      const radDy = contentCenter + ((M.ASCENT - M.DESCENT) / 2) * radScale;
+      const idxScale = scale * M.SUP_SCALE;
+      const idxParts: Part[] = [...`${node.index}`].map((char) => ({ kind: "glyph", char, scale: idxScale }));
+      const idx = row(idxParts);
+      const idxW = idx.width;
+      const idxDy = -(coverAscent * 0.68); // raised into the radical's crook
+      const idxGlyphs = idx.glyphs.map((g) => ({ ...g, dy: g.dy + idxDy }));
+      const idxChildren = idx.children.map((c) => ({ ...c, dy: c.dy + idxDy }));
+      const radical: RGlyph = {
+        kind: "char",
+        char: "√",
+        x: idxW,
+        dy: radDy,
+        scale: radScale,
+        ascent: M.ASCENT * radScale,
+        descent: M.DESCENT * radScale,
+        width: radW,
+      };
+      const bar: RGlyph = {
+        kind: "bar",
+        char: "",
+        x: idxW + radW,
+        dy: -(coverAscent - th / 2),
+        scale,
+        ascent: th / 2,
+        descent: th / 2,
+        width: child.width,
+      };
+      return {
+        node,
+        scale,
+        width: idxW + radW + child.width,
+        ascent: Math.max(coverAscent, M.ASCENT * radScale - radDy, idx.ascent - idxDy),
+        descent: Math.max(child.descent, M.DESCENT * radScale + radDy),
+        glyphs: [...idxGlyphs, radical, bar],
+        children: [...idxChildren, { box: child, dx: idxW + radW, dy: 0 }],
+      };
+    }
     case "equation": {
       const lhs = lay(node.lhs, scale);
       const rhs = lay(node.rhs, scale);

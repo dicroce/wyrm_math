@@ -17,6 +17,7 @@ import {
   neg,
   pow,
   product,
+  root,
   sqrt,
   sum,
   variablesIn,
@@ -59,6 +60,8 @@ function substExpr(e: Expr, name: string, value: Expr): Expr {
       return pow(substExpr(e.base, name, value), substExpr(e.exp, name, value));
     case "sqrt":
       return sqrt(substExpr(e.child, name, value));
+    case "root":
+      return root(e.index, substExpr(e.radicand, name, value));
     case "int":
       return e; // unreachable: an int subtree has no variables
   }

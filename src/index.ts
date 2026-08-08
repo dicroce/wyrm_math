@@ -40,6 +40,7 @@ export {
   fraction,
   pow,
   sqrt,
+  root,
   equation,
   // traversal & queries
   allNodes,
@@ -67,6 +68,7 @@ export type {
   Fraction,
   Pow,
   Sqrt,
+  Root,
   Equation,
   RelationKind,
 } from "./expr.js";
@@ -215,7 +217,7 @@ export { multiplyBothSides } from "./rules/multiplyBothSides.js";
 export type { MultiplyBothSidesParams } from "./rules/multiplyBothSides.js";
 export { negativeExponent, powerOfPower, distributePower } from "./rules/powers.js";
 export { sqrtBothSides, zeroProduct, simplifySqrt, quadraticFormula } from "./rules/quadratics.js";
-export { nthRootBothSides } from "./rules/roots.js";
+export { nthRootBothSides, simplifyNthRoot } from "./rules/roots.js";
 export { quotientOfPowers } from "./rules/quotientOfPowers.js";
 export type { QuotientOfPowersParams } from "./rules/quotientOfPowers.js";
 export { reduceIntegerFraction } from "./rules/reduceIntegerFraction.js";

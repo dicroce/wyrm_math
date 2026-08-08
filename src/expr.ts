@@ -75,6 +75,16 @@ export interface Sqrt {
   readonly child: Expr;
 }
 
+/** An nth-root radical ⁿ√x. Degree n ≥ 3; squares are their own node (`Sqrt`).
+ *  The index is metadata (not an addressable child) — you simplify the radical,
+ *  you don't drag its index. */
+export interface Root {
+  readonly kind: "root";
+  readonly id: NodeId;
+  readonly index: bigint;
+  readonly radicand: Expr;
+}
+
 /** The relation between the two sides. Inequalities are first-class. */
 export type RelationKind = "=" | "<" | "≤" | ">" | "≥";
 
@@ -103,7 +113,7 @@ export interface Equation {
 }
 
 /** Expressions that can appear inside other expressions. */
-export type Expr = Integer | Variable | Sum | Product | Neg | Fraction | Pow | Sqrt;
+export type Expr = Integer | Variable | Sum | Product | Neg | Fraction | Pow | Sqrt | Root;
 /** Anything addressable in a tree. Equation only ever appears at the root. */
 export type Node = Expr | Equation;
 
@@ -177,6 +187,11 @@ export function pow(base: Expr, exp: Expr): Pow {
 
 export function sqrt(child: Expr): Sqrt {
   return { kind: "sqrt", id: freshId(), child };
+}
+
+/** An nth-root radical ⁿ√x, for n ≥ 3 (squares use `sqrt`). */
+export function root(index: bigint, radicand: Expr): Root {
+  return { kind: "root", id: freshId(), index, radicand };
 }
 
 export function equation(lhs: Expr, rhs: Expr, relation: RelationKind = "="): Equation {
@@ -259,6 +274,10 @@ function replaceInExpr(node: Expr, targetId: NodeId, replacement: Expr): Expr {
     case "sqrt": {
       const child = replaceInExpr(node.child, targetId, replacement);
       return child === node.child ? node : { ...node, child };
+    }
+    case "root": {
+      const radicand = replaceInExpr(node.radicand, targetId, replacement);
+      return radicand === node.radicand ? node : { ...node, radicand };
     }
   }
 }
@@ -347,6 +366,8 @@ export function cloneFresh(node: Expr): Expr {
       return { kind: "pow", id: freshId(), base: cloneFresh(node.base), exp: cloneFresh(node.exp) };
     case "sqrt":
       return { kind: "sqrt", id: freshId(), child: cloneFresh(node.child) };
+    case "root":
+      return { kind: "root", id: freshId(), index: node.index, radicand: cloneFresh(node.radicand) };
   }
 }
 
@@ -363,6 +384,8 @@ export function childrenOf(node: Node): readonly Expr[] {
     case "neg":
     case "sqrt":
       return [node.child];
+    case "root":
+      return [node.radicand];
     case "sum":
     case "product":
       return node.children;
@@ -430,6 +453,8 @@ export function exprToString(node: Node): string {
     }
     case "sqrt":
       return `√(${exprToString(node.child)})`;
+    case "root":
+      return `root[${node.index}](${exprToString(node.radicand)})`;
     case "equation":
       return `${exprToString(node.lhs)} ${node.relation} ${exprToString(node.rhs)}`;
   }
@@ -456,6 +481,10 @@ export function eq(a: Node, b: Node): boolean {
       return eq(a.child, (b as Neg).child);
     case "sqrt":
       return eq(a.child, (b as Sqrt).child);
+    case "root": {
+      const br = b as Root;
+      return a.index === br.index && eq(a.radicand, br.radicand);
+    }
     case "sum":
     case "product":
       return multisetEq(a.children, (b as Sum | Product).children);

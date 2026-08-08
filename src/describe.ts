@@ -61,6 +61,10 @@ export function describeExpr(e: Expr): string {
       return `−${atom(e.child)}`;
     case "sqrt":
       return `√${atom(e.child)}`;
+    case "root": {
+      const idx = superscript(e.index.toString()) ?? e.index.toString();
+      return `${idx}√${atom(e.radicand)}`;
+    }
     case "pow": {
       const base =
         e.base.kind === "var" || e.base.kind === "int"
@@ -207,6 +211,8 @@ export function describeMove(judgment: Judgment, move: Move): string | undefined
     case "drop-one-factor":
       return "Drop the factor of 1";
     case "simplify-sqrt":
+      return "Simplify the radical";
+    case "simplify-nth-root":
       return "Simplify the radical";
     case "split-term":
       return "Split the middle term";

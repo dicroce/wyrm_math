@@ -49,7 +49,7 @@ import {
   zeroProduct,
 } from "./rules/quadratics.js";
 import { coeffAndBody, splitTerm } from "./rules/splitTerm.js";
-import { nthRootBothSides } from "./rules/roots.js";
+import { nthRootBothSides, simplifyNthRoot } from "./rules/roots.js";
 import { quotientOfPowers } from "./rules/quotientOfPowers.js";
 import { squareBothSides } from "./rules/squareBothSides.js";
 import { swapSides } from "./rules/swapSides.js";
@@ -88,6 +88,7 @@ export const allRules: readonly AnyRule[] = [
   powerZero,
   quotientOfPowers,
   reduceIntegerFraction,
+  simplifyNthRoot,
   simplifySqrt,
   splitTerm,
   squareBothSides,
@@ -288,6 +289,10 @@ export function enumerateMoves(judgment: Judgment): Move[] {
     if (node.kind === "sqrt") {
       push(simplifySqrt, node.id, {}, node.id);
     }
+    // Tap a perfect nth-root radical to evaluate it (∛64 → 4).
+    if (node.kind === "root") {
+      push(simplifyNthRoot, node.id, {}, node.id);
+    }
     // Tap a negation of a sum to distribute it: −(a + b) → −a − b.
     if (node.kind === "neg" && node.child.kind === "sum") {
       push(distributeNegation, node.id, {}, node.id);
@@ -331,7 +336,8 @@ export function enumerateMoves(judgment: Judgment): Move[] {
   // square itself) and the zero-product property (handle is the product).
   if (eqn.lhs.kind === "pow") {
     pushBranching(sqrtBothSides, eqn.id, {}, eqn.lhs.id);
-    // Degree >= 3 with an exact rational root (x³ = 8 → x = 2; x⁴ = 16 → x = ±2).
+    // Degree >= 3: take the nth root, left SYMBOLIC (x³ = 64 → x = ∛64, then
+    // simplify-nth-root → 4; ∛7 stays a radical). ± for even n.
     pushBranching(nthRootBothSides, eqn.id, {}, eqn.lhs.id);
   }
   for (const side of [eqn.lhs, eqn.rhs]) {

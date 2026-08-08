@@ -9,6 +9,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   applyBranchingRule,
+  applyRule,
   branchingRuleById,
   Derivation,
   eq,
@@ -25,7 +26,9 @@ import {
   quadraticFormula,
   rationalToExpr,
   Rational,
+  root,
   ruleById,
+  simplifyNthRoot,
   simplifySqrt,
   sqrt,
   sqrtBothSides,
@@ -145,16 +148,48 @@ describe("nth-root-both-sides", () => {
     expect(evalExpr(branches[0]!.judgment.equation.rhs, new Map()).asRational()?.equals(new Rational(-2n))).toBe(true);
   });
 
-  it("does not fire on squares or non-perfect powers", () => {
+  it("fires on base^n = constant for n ≥ 3 (root stays symbolic), not squares or inequalities", () => {
+    // n = 2 stays with sqrt-both-sides.
     const square = equation(pow(variable("x"), int(2)), int(9));
     expect(nthRootBothSides.precondition(mkJudgment(square), square.id, {})).toBe(false);
+    // A non-perfect power is now OFFERED — the root is left as a symbolic radical
+    // (∛7) that simplify-nth-root leaves alone (already simplest).
     const imperfect = equation(pow(variable("x"), int(3)), int(7));
-    expect(nthRootBothSides.precondition(mkJudgment(imperfect), imperfect.id, {})).toBe(false);
-    // x⁴ = −16 has no real root — not offered.
+    expect(nthRootBothSides.precondition(mkJudgment(imperfect), imperfect.id, {})).toBe(true);
+    const rad = applyBranchingRule(mkJudgment(imperfect), nthRootBothSides, imperfect.id, {})[0]!.judgment.equation;
+    expect(rad.rhs.kind).toBe("root");
+    expect(simplifyNthRoot.precondition(mkJudgment(rad), rad.rhs.id, {})).toBe(false);
+    // A perfect power's radical (∛8) DOES offer simplify-nth-root.
+    const eight = equation(pow(variable("x"), int(3)), int(8));
+    const radEight = applyBranchingRule(mkJudgment(eight), nthRootBothSides, eight.id, {})[0]!.judgment.equation;
+    expect(radEight.rhs.kind).toBe("root");
+    expect(simplifyNthRoot.precondition(mkJudgment(radEight), radEight.rhs.id, {})).toBe(true);
+    // Negative even radicand: offered like sqrt of a negative — the branches are
+    // undefined (no real root) and claim nothing.
     const negEven = equation(pow(variable("x"), int(4)), neg(int(16)));
-    expect(nthRootBothSides.precondition(mkJudgment(negEven), negEven.id, {})).toBe(false);
+    expect(nthRootBothSides.precondition(mkJudgment(negEven), negEven.id, {})).toBe(true);
+    // Not an equality.
     const inequality = equation(pow(variable("x"), int(3)), int(8), "<");
     expect(nthRootBothSides.precondition(mkJudgment(inequality), inequality.id, {})).toBe(false);
+  });
+
+  it("simplify-nth-root evaluates a perfect power (and only a perfect power)", () => {
+    // ∛64 → 4
+    let eqn = equation(variable("x"), root(3n, int(64)));
+    let j = mkJudgment(eqn);
+    expect(simplifyNthRoot.precondition(j, eqn.rhs.id, {})).toBe(true);
+    expect(eq(applyRule(j, simplifyNthRoot, eqn.rhs.id, {}).judgment.equation.rhs, int(4))).toBe(true);
+    // ∛(−8) → −2 (odd root of a negative)
+    eqn = equation(variable("x"), root(3n, neg(int(8))));
+    j = mkJudgment(eqn);
+    expect(eq(applyRule(j, simplifyNthRoot, eqn.rhs.id, {}).judgment.equation.rhs, int(-2))).toBe(true);
+    // ⁴√16 → 2
+    eqn = equation(variable("x"), root(4n, int(16)));
+    j = mkJudgment(eqn);
+    expect(eq(applyRule(j, simplifyNthRoot, eqn.rhs.id, {}).judgment.equation.rhs, int(2))).toBe(true);
+    // ∛7 stays a radical — the move isn't offered.
+    eqn = equation(variable("x"), root(3n, int(7)));
+    expect(simplifyNthRoot.precondition(mkJudgment(eqn), eqn.rhs.id, {})).toBe(false);
   });
 });
 

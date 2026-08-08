@@ -126,6 +126,15 @@ export function evalExpr(e: Expr, env: Env): Surd {
       if (v === undefined) throw new InexactSqrt(); // negative radicand (complex)
       return v;
     }
+    case "root": {
+      // nth roots for n >= 3 live OUTSIDE the surd field, so only EXACT roots
+      // have an exact value; ∛7 and a negative even root are undefined points.
+      const radicand = evalExpr(e.radicand, env).asRational();
+      if (radicand === undefined) throw new InexactSqrt();
+      const r = nthRootRational(radicand, e.index);
+      if (r === undefined) throw new InexactSqrt();
+      return Surd.rational(r);
+    }
   }
 }
 
