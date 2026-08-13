@@ -1,5 +1,5 @@
 import { pinsEnv, restrictionStatus, signOf } from "../assumptions.js";
-import { cloneFresh, flipRelation, fraction, type Expr } from "../expr.js";
+import { cloneFresh, flipRelation, fraction, neg, type Expr } from "../expr.js";
 import { Rational } from "../rational.js";
 import {
   idSetDiff,
@@ -17,18 +17,34 @@ export interface DivideBothSidesParams {
 }
 
 /**
- * Divide one side. A Fraction extends its denominator; a Product spreads its
- * factors into the numerator LIST — (3·x)/3 with 3 and x as separate
- * elements, not one lump — so multiplicative-cancellation can pair the
- * divisor with the factor it came from. Anything else becomes a fraction.
+ * The elements an expression contributes to a fraction list. A Product
+ * spreads — (3·x)/3 holds 3 and x as separate elements, not one lump, so
+ * multiplicative-cancellation can pair the divisor with the factor it came
+ * from — and so does a Neg over a Product: −5y is the same signed product as
+ * (−5)·y wearing a different hat, with the sign on its leading factor (the
+ * convention `divisorCandidates` in moves.ts enumerates by). Without that arm
+ * ÷−5 on Neg(Product(5, y)) lands on a dead end: (−5y)/(−5) with nothing to
+ * cancel. Anything else is its own single element.
  */
+function factorList(e: Expr): Expr[] {
+  if (e.kind === "product") return [...e.children];
+  if (e.kind === "neg" && e.child.kind === "product") {
+    const [head, ...rest] = e.child.children;
+    // The Neg keeps its id when it can host the leading factor directly, so
+    // the minus glides instead of fading; a Neg head would double up, so
+    // there the ctor collapses it into a fresh node instead.
+    const signed = head!.kind === "neg" ? neg(head!) : { ...e, child: head! };
+    return [signed, ...rest];
+  }
+  return [e];
+}
+
+/** Divide one side: a Fraction extends its denominator, anything else becomes
+ *  a fraction over the divisor (both lists spread per `factorList`). */
 function divideSide(side: Expr, divisor: Expr): Expr {
-  // A Product divisor spreads into the list (fraction lists never hold
-  // direct Products; the ctor enforces it for the other arms).
-  const divisorParts = divisor.kind === "product" ? divisor.children : [divisor];
+  const divisorParts = factorList(divisor);
   if (side.kind === "fraction") return { ...side, den: [...side.den, ...divisorParts] };
-  if (side.kind === "product") return fraction([...side.children], [divisor]);
-  return fraction([side], [divisor]);
+  return fraction(factorList(side), divisorParts);
 }
 
 /**

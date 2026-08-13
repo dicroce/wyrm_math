@@ -16,7 +16,7 @@
  *    drag a factor under the other side, drag a denominator factor across to
  *    clear it. Free-form parameters remain available through Derivation.apply.
  */
-import { allNodes, eq, type Expr, type NodeId } from "./expr.js";
+import { allNodes, cloneFresh, eq, neg, type Expr, type NodeId } from "./expr.js";
 import type { Judgment } from "./assumptions.js";
 import type { BranchingRule, Location, Rule } from "./rule.js";
 import { additiveCancellation } from "./rules/additiveCancellation.js";
@@ -136,6 +136,42 @@ export interface Move {
   readonly dropTarget?: NodeId;
   /** Dispatch through applyBranching/branchingRuleById instead of apply. */
   readonly branching?: boolean;
+}
+
+/**
+ * The divisor affordances one side offers: the whole side, plus each of its
+ * factors when the side is a product.
+ *
+ * A Neg over a Product is READ THROUGH, its leading factor carrying the sign.
+ * −5y has two tree shapes — Product(Neg(5), y) from a leading unary minus,
+ * Neg(Product(5, y)) from a binary minus or from a positive term moved across
+ * the equals — and they render identically, so they must offer the same
+ * gesture: grabbing the 5 divides by −5 either way. Without this the Neg form
+ * offers only the whole side, whose handle is the Neg node itself — the same
+ * node move-term-across hangs off, which outranks divide in the UI's tier, so
+ * nothing on that side divides at all.
+ *
+ * The handle is always a node of the CURRENT tree (the gesture resolver maps
+ * it to a layout box); only the divisor expression may be synthesized, and
+ * divide-both-sides clones its divisor before inserting it.
+ *
+ * Scoped to Neg(Product) deliberately. Reading through Neg(Integer) too would
+ * give the digit of −25 a divide handle DEEPER than the Neg's move-across,
+ * and dragging a lone negative constant across the equals would start
+ * dividing instead of moving.
+ */
+function divisorCandidates(side: Expr): { divisor: Expr; handle: NodeId }[] {
+  const candidates = [{ divisor: side, handle: side.id }];
+  const inner = side.kind === "neg" ? side.child : side;
+  if (inner.kind !== "product") return candidates;
+  for (const [i, factor] of inner.children.entries()) {
+    const signed = side.kind === "neg" && i === 0;
+    candidates.push({
+      divisor: signed ? neg(cloneFresh(factor)) : factor,
+      handle: factor.id,
+    });
+  }
+  return candidates;
 }
 
 /** Floor of the integer square root (Newton's method on bigints). */
@@ -367,9 +403,8 @@ export function enumerateMoves(judgment: Judgment): Move[] {
       push(moveTermAcross, eqn.id, { termId: t.id }, t.id, other.id);
     }
     // Drag the side (or one of its factors) under the other side.
-    const divisors = side.kind === "product" ? [side, ...side.children] : [side];
-    for (const f of divisors) {
-      push(divideBothSides, eqn.id, { divisor: f }, f.id, other.id);
+    for (const { divisor, handle } of divisorCandidates(side)) {
+      push(divideBothSides, eqn.id, { divisor }, handle, other.id);
     }
     // Drag a denominator factor across to clear it — dropping on the other
     // side, or "up" onto the numerator (each num element is a target; there

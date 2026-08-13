@@ -21,7 +21,9 @@ import {
   ruleById,
   sum,
   variable,
+  type DivideBothSidesParams,
   type Expr,
+  type Judgment,
   type Move,
   type Node,
 } from "../src/index.js";
@@ -422,6 +424,13 @@ describe("enumerateMoves", () => {
     d.apply(ruleById(m.ruleId), m.location, m.params);
   }
 
+  /** moveFor against a bare judgment. */
+  function moveFrom(j: Judgment, handle: string, ruleId: string): Move {
+    const m = movesFrom(j, handle).find((mv) => mv.ruleId === ruleId);
+    expect(m, `no ${ruleId} move from ${handle}`).toBeDefined();
+    return m!;
+  }
+
   // THE quadratic regression: x² − 6x + 9 = 0 solves to x = 3 with only
   // enumerated gestures — the ac-method split, factoring by grouping (incl.
   // the literal-divisor factor-out that reaches the constant), zero-product.
@@ -763,6 +772,78 @@ describe("enumerateMoves", () => {
     expect(eq(d.current.equation, equation(variable("x"), int(-3), ">"))).toBe(true);
     // x = 0 satisfies x > −3: checkSolution works on inequalities too.
     expect(d.checkSolution(new Map([["x", Rational.zero]])).verdict).toBe("verified");
+  });
+
+  // Playtest regression: on −5y = −25 you could not drag the −5 under the
+  // −25. −5y has TWO tree shapes that render identically — Product(Neg(5), y)
+  // from a leading unary minus, and Neg(Product(5, y)) from a binary minus or
+  // from a positive 5y moved across the equals — and only the first offered
+  // its factors as divisors. The second offered just the whole side, whose
+  // handle is the Neg node move-term-across already owns, so the UI's tier
+  // rule let move-across win and NOTHING on that side divided.
+  it("offers factor divisors through a leading Neg (−5y = −25)", () => {
+    const five = int(5);
+    const y = variable("y");
+    const lhs = neg(product([five, y]));
+    const rhs = int(-25);
+    if (rhs.kind !== "neg") throw new Error("unreachable");
+    const j = mkJudgment(equation(lhs, rhs));
+
+    // The whole side, the signed coefficient, and the variable — plus the
+    // rhs's own whole-side divisor.
+    const divs = byRule(enumerateMoves(j), "divide-both-sides");
+    expect(handles(divs)).toEqual([lhs.id, five.id, y.id, rhs.id].sort());
+
+    // Grabbing the 5 divides by −5, exactly as it does in the other shape.
+    const byFive = moveFrom(j, five.id, "divide-both-sides");
+    expect(byFive.dropTarget).toBe(rhs.id);
+    expect(eq((byFive.params as DivideBothSidesParams).divisor, int(-5))).toBe(true);
+
+    // Only the LEADING factor carries the sign: the y divides by y, not −y.
+    const byY = moveFrom(j, y.id, "divide-both-sides");
+    expect(eq((byY.params as DivideBothSidesParams).divisor, y)).toBe(true);
+
+    // A Neg over a LITERAL is deliberately not read through: the digit of −25
+    // gets no divide handle, so dragging that term across still moves it.
+    expect(movesFrom(j, rhs.child.id)).toEqual([]);
+  });
+
+  // The same regression end to end: the −5y here is built by the engine, not
+  // by the test — move-term-across wraps the departing 5y in a fresh Neg.
+  it("drag-solves 10 − 5y = −15 to y = 5 using only enumerated moves", () => {
+    const ten = int(10);
+    const five = int(5);
+    const y = variable("y");
+    const lhs = sum([ten, neg(product([five, y]))]);
+    const d = new Derivation(equation(lhs, int(-15)));
+
+    // 1. Drag the 10 across, fold −15 − 10: this leaves Neg(Product(5, y)).
+    applyMove(d, moveFor(d, ten.id, "move-term-across"));
+    const rhsSum = d.current.equation.rhs;
+    if (rhsSum.kind !== "sum") throw new Error("unreachable");
+    applyMove(d, moveFor(d, rhsSum.children[0]!.id, "combine-integers"));
+    expect(eq(d.current.equation, equation(neg(product([int(5), variable("y")])), int(-25))))
+      .toBe(true);
+    const negTerm = d.current.equation.lhs; // the shape under test
+    expect(negTerm.kind).toBe("neg");
+
+    // 2. Grab the 5 and drag it under the −25: ÷ −5, both sides.
+    applyMove(d, moveFor(d, five.id, "divide-both-sides"));
+
+    // The −5y spread into the numerator LIST as the signed product it is, so
+    // there is a −5 up there to cancel — and the Neg kept its id doing it.
+    const overBar = d.current.equation.lhs;
+    if (overBar.kind !== "fraction") throw new Error("unreachable");
+    expect(overBar.num.map((c) => c.id)).toEqual([negTerm.id, y.id]);
+
+    // 3. Cancel the −5s on the left, reduce −25/−5 on the right.
+    applyMove(d, moveFor(d, negTerm.id, "multiplicative-cancellation"));
+    const rhsFrac = d.current.equation.rhs;
+    if (rhsFrac.kind !== "fraction") throw new Error("unreachable");
+    applyMove(d, moveFor(d, rhsFrac.num[0]!.id, "reduce-integer-fraction"));
+
+    expect(eq(d.current.equation, equation(variable("y"), int(5)))).toBe(true);
+    expect(d.checkSolution(new Map([["y", Rational.of(5)]])).verdict).toBe("verified");
   });
 
   it("solves x³/x² = 4 via quotient-of-powers, tracking x ≠ 0", () => {
