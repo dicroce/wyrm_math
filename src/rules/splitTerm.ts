@@ -52,6 +52,20 @@ export function coeffAndBody(term: Expr): { coeff: bigint; body: readonly Expr[]
   return { coeff: 1n, body: [term] };
 }
 
+/**
+ * Signed integer coefficient and single variable of a simple linear term
+ * (`v`, `−v`, `c·v`, `−c·v`, `(−c)(−v)`), or undefined if the term isn't that
+ * shape. Linear ⟺ the body is a single variable; a second `coeffAndBody` peels
+ * any residual sign a double-negative product (e.g. (−2)(−y)) leaves in it.
+ */
+export function linearTerm(t: Expr): { coeff: bigint; variable: string } | undefined {
+  const { coeff, body } = coeffAndBody(t);
+  if (body.length !== 1) return undefined;
+  const inner = coeffAndBody(body[0]!);
+  if (inner.body.length !== 1 || inner.body[0]!.kind !== "var") return undefined;
+  return { coeff: coeff * inner.coeff, variable: inner.body[0]!.name };
+}
+
 /** coeff·body as a canonical term (Neg outside, no 1· prefix). */
 export function termFromCoeff(coeff: bigint, body: readonly Expr[]): Expr {
   const mag = coeff < 0n ? -coeff : coeff;

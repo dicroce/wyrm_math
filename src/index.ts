@@ -222,7 +222,7 @@ export { quotientOfPowers } from "./rules/quotientOfPowers.js";
 export type { QuotientOfPowersParams } from "./rules/quotientOfPowers.js";
 export { reduceIntegerFraction } from "./rules/reduceIntegerFraction.js";
 export type { ReduceIntegerFractionParams } from "./rules/reduceIntegerFraction.js";
-export { splitTerm } from "./rules/splitTerm.js";
+export { splitTerm, linearTerm } from "./rules/splitTerm.js";
 export type { SplitTermParams } from "./rules/splitTerm.js";
 export { squareBothSides } from "./rules/squareBothSides.js";
 export { swapSides } from "./rules/swapSides.js";
