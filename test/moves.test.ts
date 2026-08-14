@@ -177,8 +177,12 @@ describe("enumerateMoves", () => {
     const p = product([three, two, variable("x")]);
     const eqn = equation(p as Expr, int(0));
     const moves = byRule(enumerateMoves(mkJudgment(eqn)), "combine-integer-factors");
-    expect(moves).toHaveLength(2); // (3,2) and (2,3); pairs with x are rejected
-    expect(handles(moves)).toEqual([three.id, two.id].sort());
+    // Two drags (3↔2) plus one TAP on the product that folds the first integer
+    // pair (4·(−8) → −32); pairs with x are still rejected either way.
+    const drags = moves.filter((m) => m.dropTarget !== undefined);
+    const taps = moves.filter((m) => m.dropTarget === undefined);
+    expect(handles(drags)).toEqual([three.id, two.id].sort());
+    expect(taps.map((m) => m.handle)).toEqual([p.id]);
   });
 
   // Regression: the x/2 = 3 preset must be drag-solvable end to end —

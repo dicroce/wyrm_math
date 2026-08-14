@@ -38,6 +38,7 @@ import {
   powerZero,
   distributePower,
   product,
+  pullOutNegative,
   reduceIntegerFraction,
   sum,
   variable,
@@ -310,6 +311,30 @@ describe("cancel-negatives", () => {
     const eqn = embed(prod, "top", int(0), true);
     const { equation: after } = cancelNegatives.apply(mkJudgment(eqn), prod.id, {});
     expect(exprToString(after.lhs)).toBe("(2 * y)");
+  });
+});
+
+describe("pull-out-negative", () => {
+  it("property: (−a)·b preserves the solution set", () => {
+    fc.assert(
+      fc.property(arbExpr, arbExpr, arbEnvs, (a, b, envs) => {
+        const prod = product([neg(a), b]);
+        if (prod.kind !== "product") return; // a or b collapsed the product away
+        const eqn = embed(prod, "top", int(1), true); // ((−a)·b) = 1
+        const j = mkJudgment(eqn);
+        if (!pullOutNegative.precondition(j, prod.id, {})) return; // not the gated case
+        const { equation: after } = pullOutNegative.apply(j, prod.id, {});
+        assertSolutionSetPreserved(eqn, after, envs);
+      }),
+    );
+  });
+
+  it("turns (−20)·x into −(20·x)", () => {
+    const prod = product([int(-20), variable("x")]);
+    const eqn = embed(prod, "top", int(0), true);
+    const { equation: after } = pullOutNegative.apply(mkJudgment(eqn), prod.id, {});
+    expect(after.lhs.kind).toBe("neg");
+    expect(exprToString(after.lhs)).toBe("-(20 * x)");
   });
 });
 

@@ -212,6 +212,52 @@ export const multiplyByZero: Rule<Record<string, never>> = {
   },
 };
 
+/**
+ * Pull a single negative factor out in front of a product: (−20)·x → −(20·x),
+ * 20·(−y) → −(20·y). An exact identity (−a·b = −(a·b)) that tidies the clunky
+ * parenthesized form into standard notation. Gated to products with EXACTLY one
+ * negative factor (two cancel via cancel-negatives) AND at least one non-numeric
+ * factor — a pure numeric product like 4·(−8) is evaluated by
+ * combine-integer-factors instead, which outranks this on a tap.
+ */
+const isNumericLit = (e: Expr): boolean =>
+  e.kind === "int" || (e.kind === "neg" && e.child.kind === "int");
+
+export const pullOutNegative: Rule<Record<string, never>> = {
+  id: "pull-out-negative",
+  description: "Pull the negative sign out in front of the product.",
+
+  precondition(judgment, location, _params) {
+    const node = findById(judgment.equation, location);
+    if (node === undefined || node.kind !== "product") return false;
+    const negCount = node.children.filter((c) => c.kind === "neg").length;
+    return negCount === 1 && node.children.some((c) => !isNumericLit(c));
+  },
+
+  apply(judgment, location, _params): RuleApplication {
+    if (!this.precondition(judgment, location, _params)) {
+      throw new RulePreconditionViolation(this.id, "needs exactly one negative factor and a non-numeric factor");
+    }
+    const tree = judgment.equation;
+    const node = findById(tree, location);
+    if (node === undefined || node.kind !== "product") {
+      throw new RulePreconditionViolation(this.id, "unreachable");
+    }
+    const negIndex = node.children.findIndex((c) => c.kind === "neg");
+    const negChild = node.children[negIndex]!;
+    if (negChild.kind !== "neg") throw new RulePreconditionViolation(this.id, "unreachable");
+    // Un-negate that one factor, rebuild the product (keeps its id), wrap in Neg.
+    const children = node.children.map((c, i) => (i === negIndex ? negChild.child : c));
+    const negated = neg(rebuildNary(node, children));
+    const tree2 = replaceTermRespectingInvariants(tree, node.id, negated);
+    return {
+      equation: tree2,
+      emits: [],
+      diff: { ...idSetDiff(tree, tree2), merged: [], moved: [] },
+    };
+  },
+};
+
 /** (−a)·(−b) ~> a·b: two negative factors in a product cancel. Exact and
  *  unconditional. Common after distributing a negative over a difference, e.g.
  *  (−2)(x − y) → (−2)x + (−2)(−y), where the second term is (−2)(−y) → 2y. */

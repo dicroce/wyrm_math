@@ -204,6 +204,7 @@ export {
   dropOneFactor,
   multiplyByZero,
   cancelNegatives,
+  pullOutNegative,
   distributeNegation,
   powerOne,
   powerZero,

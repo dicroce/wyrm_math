@@ -204,6 +204,8 @@ export function describeMove(judgment: Judgment, move: Move): string | undefined
       return "0 times anything is 0";
     case "cancel-negatives":
       return "Two negatives make a positive";
+    case "pull-out-negative":
+      return "Pull the negative out front";
     case "distribute-negation":
       return "Distribute the negative";
     case "drop-zero-term":

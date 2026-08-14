@@ -38,6 +38,7 @@ import {
   multiplyByZero,
   powerOne,
   powerZero,
+  pullOutNegative,
 } from "./rules/identities.js";
 import { moveTermAcross } from "./rules/moveTermAcross.js";
 import { distributePower, negativeExponent, powerOfPower } from "./rules/powers.js";
@@ -84,6 +85,7 @@ export const allRules: readonly AnyRule[] = [
   multiplyBothSides,
   negativeExponent,
   powerOfPower,
+  pullOutNegative,
   powerOne,
   powerZero,
   quotientOfPowers,
@@ -310,6 +312,14 @@ export function enumerateMoves(judgment: Judgment): Move[] {
       }
       push(multiplyByZero, node.id, {}, node.id); // tap: 0·x ~> 0 (precond gates)
       push(cancelNegatives, node.id, {}, node.id); // tap: (−a)(−b) ~> a·b (precond gates)
+      push(pullOutNegative, node.id, {}, node.id); // tap: (−c)·x ~> −(c·x) (precond gates)
+      // Tap the whole product to fold its first integer pair: 4·(−8) → −32.
+      const intFactors = node.children.filter(
+        (c) => c.kind === "int" || (c.kind === "neg" && c.child.kind === "int"),
+      );
+      if (intFactors.length >= 2) {
+        push(combineIntegerFactors, node.id, { termA: intFactors[0]!.id, termB: intFactors[1]!.id }, node.id);
+      }
     }
     // Tap moves on powers: expand, unwrap x^1, collapse x^0, flip a
     // negative exponent, fold nested powers, distribute over a product.
