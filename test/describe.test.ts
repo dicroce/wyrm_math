@@ -91,6 +91,18 @@ describe("describeMove — structural and relation moves", () => {
     expect(captionsFor("x = 6 - 1", "combine-integers")).not.toContain("Add −1 and 6");
   });
 
+  it("captions factor-out by what it does: combine like terms vs factor out k", () => {
+    // like terms: both cofactors are plain numbers
+    expect(new Set(captionsFor("3x + 2x = 10", "factor-out"))).toEqual(new Set(["Combine like terms"]));
+    expect(new Set(captionsFor("2sqrt(5) + 3sqrt(5) = x", "factor-out"))).toEqual(new Set(["Combine like terms"]));
+    // a genuine factoring names the factor
+    expect(captionsFor("3xy + 2x = 5", "factor-out")).toContain("Factor out x");
+    expect(captionsFor("3x^2 + 10x - 2 = 0", "factor-out")).toContain("Factor out 2");
+    expect(new Set(captionsFor("x = (-10 + 2sqrt(31))/6", "factor-out"))).toEqual(new Set(["Factor out 2"]));
+    expect(captionsFor("x = (-10 - 2sqrt(31))/6", "factor-out")).toContain("Factor out −2");
+    expect(captionsFor("3x + 9 = 0", "factor-out")).toContain("Factor out 3");
+  });
+
   it("returns undefined for an unknown rule id", () => {
     const j = mkJudgment(parseEquation("x = 1"));
     const fake: Move = { ruleId: "no-such-rule", location: "n1", params: {}, handle: "n1" };

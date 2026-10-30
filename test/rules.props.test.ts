@@ -24,6 +24,7 @@ import {
   fraction,
   combineIntegers,
   findById,
+  gcd,
   int,
   splitTerm,
   invariantViolations,
@@ -40,6 +41,7 @@ import {
   product,
   pullOutNegative,
   reduceIntegerFraction,
+  sqrt,
   sum,
   variable,
   type Equation,
@@ -1460,16 +1462,101 @@ describe("factor-out", () => {
     expect(findById(r2.equation, three2.id)).toBeDefined();
   });
 
-  it("rejects non-divisor literal pairs and ±1 divisors", () => {
+  // The GCF mode: neither literal need divide the other — any shared factor
+  // > 1 comes out (negative only when both terms are negative).
+  const arbGcfScenario = fc
+    .tuple(
+      fc.integer({ min: -30, max: 30 }).filter((n) => n !== 0).map(BigInt),
+      fc.integer({ min: -30, max: 30 }).filter((n) => n !== 0).map(BigInt),
+      arbExpr.filter((e) => e.kind !== "sum" && e.kind !== "neg" && e.kind !== "int"),
+      fc.option(
+        arbExpr.filter((e) => e.kind !== "sum" && e.kind !== "neg" && e.kind !== "int"),
+        { nil: undefined },
+      ),
+      fc.array(arbExpr, { maxLength: 2 }),
+      fc.integer({ min: 0, max: 7 }),
+      fc.integer({ min: 0, max: 7 }),
+      arbWrap,
+      fc.boolean(),
+      arbExpr,
+    )
+    .filter(([sa, sb]) => gcd(sa < 0n ? -sa : sa, sb < 0n ? -sb : sb) > 1n)
+    .map(([sa, sb, bodyA, bodyB, extras, posA, posB, wrap, onLhs, other]) => {
+      const litA = int(sa < 0n ? -sa : sa);
+      const termA = sa < 0n ? neg(product([litA, bodyA])) : product([litA, bodyA]);
+      const litB = int(sb < 0n ? -sb : sb);
+      const coreB = bodyB === undefined ? litB : product([litB, bodyB]);
+      const termB = sb < 0n ? neg(coreB) : coreB;
+      const sc = buildNaryScenario("sum", termA, termB, extras, posA, posB, wrap, onLhs, other);
+      return { ...sc, params: { factorA: litA.id, factorB: litB.id } };
+    });
+
+  it("property: a shared literal GCF factors out of both terms soundly", () => {
+    fc.assert(
+      fc.property(arbGcfScenario, arbEnvs, (sc, envs) => {
+        const j = mkJudgment(sc.eqn);
+        expect(factorOut.precondition(j, sc.loc, sc.params)).toBe(true);
+        const { equation: after, emits } = factorOut.apply(j, sc.loc, sc.params);
+        expect(emits).toEqual([]);
+        expect(invariantViolations(after)).toEqual([]);
+        assertSolutionSetPreserved(sc.eqn, after, envs);
+        checkBystandersStable(after, sc.bystanders, true);
+      }),
+    );
+  });
+
+  it("pulls the GCF in either drag direction: −10 + 2√31 ~> (−5 + √31)·2", () => {
+    const ten = int(10);
+    const two = int(2);
+    const termA = neg(ten);
+    const termB = product([two, sqrt(int(31))]);
+    const s = sum([termA, termB]);
+    if (s.kind !== "sum") throw new Error("unreachable");
+    const j = mkJudgment(equation(s, int(0)));
+    // grab the 10 (it does not divide 2): the GCF 2 comes out, positive
+    const r1 = factorOut.apply(j, s.id, { factorA: ten.id, factorB: two.id });
+    expect(eq(r1.equation.lhs, product([sum([int(-5), sqrt(int(31))]), int(2)]))).toBe(true);
+    // grab the 2 (it divides 10): unchanged divisor behaviour
+    const r2 = factorOut.apply(j, s.id, { factorA: two.id, factorB: ten.id });
+    expect(eq(r2.equation.lhs, product([sum([sqrt(int(31)), int(-5)]), int(2)]))).toBe(true);
+
+    // neither divides the other: 4 + 6y ~> (2 + 3y)·2
+    const four = int(4);
+    const six = int(6);
+    const s3 = sum([four, product([six, variable("y")])]);
+    if (s3.kind !== "sum") throw new Error("unreachable");
+    const r3 = factorOut.apply(mkJudgment(equation(s3, int(0))), s3.id, {
+      factorA: four.id,
+      factorB: six.id,
+    });
+    expect(
+      eq(r3.equation.lhs, product([sum([int(2), product([int(3), variable("y")])]), int(2)])),
+    ).toBe(true);
+
+    // both negative: −4 − 6y ~> (2 + 3y)·(−2)
+    const four2 = int(4);
+    const six2 = int(6);
+    const s4 = sum([neg(four2), neg(product([six2, variable("y")]))]);
+    if (s4.kind !== "sum") throw new Error("unreachable");
+    const r4 = factorOut.apply(mkJudgment(equation(s4, int(0))), s4.id, {
+      factorA: four2.id,
+      factorB: six2.id,
+    });
+    expect(
+      eq(r4.equation.lhs, product([sum([int(2), product([int(3), variable("y")])]), int(-2)])),
+    ).toBe(true);
+  });
+
+  it("rejects coprime literal pairs and ±1 divisors", () => {
     const nine = int(9);
     const x = variable("x");
     const termA = product([nine, x]);
-    const three = int(3);
-    const s = sum([termA, three]);
+    const four = int(4);
+    const s = sum([termA, four]);
     if (s.kind !== "sum") throw new Error("unreachable");
     const j = mkJudgment(equation(s, int(0)));
-    // 9 does not divide 3 — only the divisor side initiates.
-    expect(factorOut.precondition(j, s.id, { factorA: nine.id, factorB: three.id })).toBe(false);
+    // 9 and 4 share no factor > 1.
+    expect(factorOut.precondition(j, s.id, { factorA: nine.id, factorB: four.id })).toBe(false);
 
     const one = int(1);
     const termC = product([one, variable("x")]);

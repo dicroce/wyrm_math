@@ -8,6 +8,7 @@
 import type { Judgment } from "./assumptions.js";
 import { findById, type Expr } from "./expr.js";
 import type { Move } from "./moves.js";
+import { factorOutSummary, type FactorOutParams } from "./rules/factorOut.js";
 
 const SUPERSCRIPT: Record<string, string> = {
   "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
@@ -178,8 +179,14 @@ export function describeMove(judgment: Judgment, move: Move): string | undefined
       return "Combine like factors";
     case "combine-fractions":
       return "Add over a common denominator";
-    case "factor-out":
-      return "Combine like terms";
+    case "factor-out": {
+      // Same rule, two learner-facing acts: 3x + 2x ~> (3 + 2)·x combines
+      // like terms; 3x² + 10x ~> (3x + 10)·x and −10 + 2√31 ~> (−5 + √31)·2
+      // factor something out — name the factor so the user sees which.
+      const s = factorOutSummary(judgment.equation, move.location, move.params as FactorOutParams);
+      if (s === undefined || s.likeTerms) return "Combine like terms";
+      return `Factor out ${describeExpr(s.factor)}`;
+    }
     case "factor-out-negative":
       return "Factor out −1";
     case "distribute":

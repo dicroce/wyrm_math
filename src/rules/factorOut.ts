@@ -20,6 +20,7 @@ import {
   type Rule,
   type RuleApplication,
 } from "../rule.js";
+import { gcd } from "../rational.js";
 import { termFromCoeff } from "./splitTerm.js";
 
 export interface FactorOutParams {
@@ -27,7 +28,7 @@ export interface FactorOutParams {
   readonly factorA: NodeId;
   /**
    * An instance inside a different term: structurally equal to factorA, OR
-   * an integer literal that factorA's signed literal value divides.
+   * an integer literal sharing a common factor (> 1) with factorA's.
    */
   readonly factorB: NodeId;
 }
@@ -89,7 +90,7 @@ function unsignedRest(term: Expr, instId: NodeId): readonly Expr[] | undefined {
 
 type FactorOutSite = { sum: Sum; termA: Expr; termB: Expr; fa: Expr; fb: Expr } & (
   | { mode: "structural" }
-  | { mode: "literal-divisor"; sa: bigint; sb: bigint }
+  | { mode: "literal-divisor"; sa: bigint; sb: bigint; divisor: bigint }
 );
 
 function resolve(
@@ -121,16 +122,67 @@ function resolve(
     return undefined;
   if (termA.id === termB.id) return undefined;
   if (eq(fa, fb)) return { mode: "structural", sum: node, termA, termB, fa, fb };
-  // Literal-divisor factoring: the grabbed instance, read with its term's
-  // sign (the 3 of −3x is −3), divides the other term's literal — pull the
-  // SIGNED value out of both. This is what makes factoring by grouping
-  // reach the constant: −3x + 9 ~> (x + −3)·(−3).
+  // Literal factoring. When the grabbed instance, read with its term's sign
+  // (the 3 of −3x is −3), divides the other term's literal, pull that SIGNED
+  // value out of both — what makes factoring by grouping reach the constant:
+  // −3x + 9 ~> (x + −3)·(−3). Otherwise pull the GCF, so the gesture works in
+  // BOTH drag directions and when neither literal divides the other:
+  // −10 + 2√31 ~> (−5 + √31)·2,  4 + 6y ~> (2 + 3y)·2. A GCF comes out
+  // negative only when both terms are negative: −4 − 6y ~> (2 + 3y)·(−2).
   const sa = signedLiteral(termA, fa);
   const sb = signedLiteral(termB, fb);
-  if (sa === undefined || sb === undefined) return undefined;
-  if (sa === 1n || sa === -1n || sa === 0n) return undefined; // ±1 factors out as noise
-  if (sb % sa !== 0n) return undefined;
-  return { mode: "literal-divisor", sum: node, termA, termB, fa, fb, sa, sb };
+  if (sa === undefined || sb === undefined || sa === 0n) return undefined;
+  const g = gcd(sa < 0n ? -sa : sa, sb < 0n ? -sb : sb);
+  if (g === 1n) return undefined; // ±1 factors out as noise
+  const divisor = sb % sa === 0n ? sa : sa < 0n && sb < 0n ? -g : g;
+  return { mode: "literal-divisor", sum: node, termA, termB, fa, fb, sa, sb, divisor };
+}
+
+/** The pulled-out factor and the two cofactors left behind: the result term
+ *  is (cofA + cofB)·factor. */
+function split(
+  r: FactorOutSite,
+  params: FactorOutParams,
+): { cofA: Expr; cofB: Expr; factor: Expr } {
+  if (r.mode === "structural") {
+    // (cofA + cofB) · factor — factorA's node carries on by identity.
+    return {
+      cofA: cofactorOf(r.termA, params.factorA)!,
+      cofB: cofactorOf(r.termB, params.factorB)!,
+      factor: r.fa,
+    };
+  }
+  // The signed divisor comes out of both terms: cofactors are the
+  // sign-stripped rests scaled by sa/divisor and sb/divisor. When the
+  // divisor is the grabbed literal itself and positive, it IS factorA's
+  // node (identity survives); otherwise it is a fresh canonical literal.
+  return {
+    cofA: termFromCoeff(r.sa / r.divisor, [...unsignedRest(r.termA, params.factorA)!]),
+    cofB: termFromCoeff(r.sb / r.divisor, [...unsignedRest(r.termB, params.factorB)!]),
+    factor: r.divisor === r.sa && r.sa > 0n ? r.fa : int(r.divisor),
+  };
+}
+
+/**
+ * What a factor-out would pull out, for captions: the factor, and whether
+ * this is COMBINING LIKE TERMS (both cofactors are plain numbers, as in
+ * 3x + 2x ~> (3 + 2)·x) rather than factoring (3x² + 10x ~> (3x + 10)·x,
+ * −10 + 2√31 ~> (−5 + √31)·2). Undefined when the move doesn't apply.
+ */
+export function factorOutSummary(
+  tree: Equation,
+  location: Location,
+  params: FactorOutParams,
+): { factor: Expr; likeTerms: boolean } | undefined {
+  const r = resolve(tree, location, params);
+  if (r === undefined) return undefined;
+  const { cofA, cofB, factor } = split(r, params);
+  const isNumber = (e: Expr): boolean =>
+    e.kind === "int" ||
+    (e.kind === "neg" && isNumber(e.child)) ||
+    (e.kind === "product" && e.children.every(isNumber));
+  const factorIsNumber = isNumber(factor);
+  return { factor, likeTerms: !factorIsNumber && isNumber(cofA) && isNumber(cofB) };
 }
 
 /**
@@ -155,26 +207,10 @@ export const factorOut: Rule<FactorOutParams> = {
     if (r === undefined) {
       throw new RulePreconditionViolation(
         this.id,
-        "the two ids are not equal factor instances (nor a literal divisor pair) in distinct terms of this sum",
+        "the two ids are not equal factor instances (nor literals sharing a factor) in distinct terms of this sum",
       );
     }
-    let cofA: Expr;
-    let cofB: Expr;
-    let factor: Expr;
-    if (r.mode === "structural") {
-      cofA = cofactorOf(r.termA, params.factorA)!;
-      cofB = cofactorOf(r.termB, params.factorB)!;
-      // (cofA + cofB) · factor — factorA's node carries on by identity.
-      factor = r.fa;
-    } else {
-      // The signed literal comes out of both terms whole: cofactors are the
-      // sign-stripped rests, termB's scaled by sb/sa. A positive divisor IS
-      // factorA's node (identity survives); a negative one is a fresh
-      // canonical Neg(Integer).
-      cofA = product([...unsignedRest(r.termA, params.factorA)!]);
-      cofB = termFromCoeff(r.sb / r.sa, [...unsignedRest(r.termB, params.factorB)!]);
-      factor = r.sa > 0n ? r.fa : int(r.sa);
-    }
+    const { cofA, cofB, factor } = split(r, params);
     const newTerm = product([sum([cofA, cofB]), factor]);
     const children = r.sum.children
       .filter((c) => c.id !== r.termB.id)
